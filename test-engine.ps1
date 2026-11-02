@@ -79,6 +79,70 @@ $m = New-KAMutex
 Check 'mutex detects the running instance' ((Test-KAAlreadyRunning) -eq $true)
 $m.Dispose()
 
+Write-Host '== tier 2: schedule window =='
+$sched = Test-KAInSchedule -From '00:00' -Until '23:59' -Days @() -Now (Get-Date)
+Check 'all-day window always in' ($sched.InWindow)
+$sched2 = Test-KAInSchedule -From '00:00' -Until '00:01' -Days @() -Now (Get-Date)
+if ($sched2.InWindow) {
+    Write-Host '  skip - currently inside the 00:00-00:01 window'
+} else {
+    Check 'narrow window excludes now' (-not $sched2.InWindow)
+    Check 'next start computed' ($sched2.NextStart -is [DateTime])
+}
+# overnight window (22:00-06:00) must be handled both halves
+$midnight = [DateTime]::new(2026, 11, 2, 23, 30, 0)
+$sched3 = Test-KAInSchedule -From '22:00' -Until '06:00' -Days @() -Now $midnight
+Check 'overnight window in (23:30)' $sched3.InWindow
+$morning = [DateTime]::new(2026, 11, 2, 3, 0, 0)
+$sched4 = Test-KAInSchedule -From '22:00' -Until '06:00' -Days @() -Now $morning
+Check 'overnight window in (03:00)' $sched4.InWindow
+$noon = [DateTime]::new(2026, 11, 3, 12, 0, 0)
+$sched5 = Test-KAInSchedule -From '22:00' -Until '06:00' -Days @() -Now $noon
+Check 'overnight window out (12:00)' (-not $sched5.InWindow)
+# day filter
+$sched6 = Test-KAInSchedule -From '00:00' -Until '23:59' -Days @('Sunday') -Now $noon
+if ($noon.DayOfWeek -eq 'Sunday') {
+    Check 'day filter includes Sunday' $sched6.InWindow
+} else {
+    Check 'day filter excludes other days' (-not $sched6.InWindow)
+}
+
+Write-Host '== tier 2: run until / run for =='
+$st4 = Initialize-KAEngine -Interval 1 -ActiveMinutes 1 -RestMinutes 1 -InputMode 'power' -PowerRequest -RunFor '30m'
+Check 'run-for parsed to a stop time' ($st4.StopAt -is [DateTime])
+$st5 = Initialize-KAEngine -Interval 1 -ActiveMinutes 1 -RestMinutes 1 -InputMode 'power' -PowerRequest -RunUntil '23:59'
+Check 'run-until parsed to a stop time' ($st5.StopAt -is [DateTime])
+$st6 = Initialize-KAEngine -InputMode 'power' -PowerRequest -RunFor '1h30m'
+$mins = ($st6.StopAt - (Get-Date)).TotalMinutes
+Check '1h30m parsed to 90 minutes' ($mins -gt 89 -and $mins -lt 91)
+$st7 = Initialize-KAEngine -InputMode 'power' -PowerRequest -RunFor 'bogus'
+Check 'unparsable duration = no stop time' ($null -eq $st7.StopAt)
+# stop-at fires inside the tick
+$st8 = Initialize-KAEngine -Interval 1 -ActiveMinutes 1 -RestMinutes 1 -InputMode 'none' -PowerRequest -RunFor '0m'
+if (-not $st8.StopAt) { $st8.StopAt = (Get-Date).AddSeconds(-1) }
+Start-KACycle $st8
+$out8 = Invoke-KATick $st8
+Check 'expired run window stops the engine' ($st8.Phase -eq 'STOPPED' -and $out8.Events -match 'Run window ended')
+
+Write-Host '== tier 2: battery =='
+Check 'ignore mode always allows' (Test-KABatteryAllows 'ignore' 'battery')
+Check 'require-ac blocks battery' (-not (Test-KABatteryAllows 'require-ac' 'battery'))
+Check 'require-ac allows ac' (Test-KABatteryAllows 'require-ac' 'ac')
+Check 'unknown power source allows' (Test-KABatteryAllows 'require-ac' 'unknown')
+$src = Get-KAPowerSource
+Check "power source query works (got '$src')" (@('ac', 'battery', 'unknown').Contains($src))
+$st9 = Initialize-KAEngine -Interval 1 -ActiveMinutes 1 -RestMinutes 1 -InputMode 'key' -BatteryMode 'require-ac'
+if ($src -eq 'battery') {
+    Check 'battery suppression reason present' ((Get-KASuppressionReason $st9.Cfg) -like 'on battery*')
+} else {
+    Check 'ac = no suppression' ((Get-KASuppressionReason $st9.Cfg) -eq '')
+}
+
+Write-Host '== tier 2: day list + duration parsing =='
+Check 'day list splits' ((Split-KADayList @('mon, tue', 'wed')).Count -eq 3)
+Check 'days trimmed' ((Split-KADayList @(' mon ') | ForEach-Object { $_ }) -eq 'mon')
+Check 'duration split' ((Split-KADayList @()).Count -eq 0)
+
 Write-Host "RESULT: $pass passed, $fail failed"
 if ($fail -gt 0) { exit 1 }
 exit 0

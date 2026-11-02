@@ -45,12 +45,23 @@ Then it repeats: ACTIVE -> REST -> ACTIVE ... until you stop it.
 | `-BlackList <names>` | none | Processes that pause input: `-BlackList zoom,teams` |
 | `-RespectFullscreen` | off | Pause input while a fullscreen app has focus |
 | `-DryRun` | off | Log the plan, touch nothing |
+| `-From HH:mm` | all day | Schedule window start (overnight windows like `22:00-06:00` work) |
+| `-Until HH:mm` | all day | Schedule window end |
+| `-Days <names>` | every day | Weekday filter: `-Days mon,tue,wed` |
+| `-RunFor <dur>` | none | Stop after: `1h30m`, `90m`, `45s` |
+| `-RunUntil HH:mm` | none | Stop at this clock time |
+| `-BatteryMode <mode>` | `ignore` | `ignore` / `require-ac` / `pause-on-battery` |
 
 ```bat
 KeepAlive.bat                                            # GUI
 KeepAlive.bat -ActiveMinutes 30 -RestMinutes 5           # 30 min on, 5 min idle, repeat
 KeepAlive.bat -Key Ctrl -Interval 30                     # faster Ctrl taps
 KeepAlive.bat -ActiveMinutes 0                           # never rest
+KeepAlive.bat -DryRun                                    # plan only, press nothing
+KeepAlive.bat -From 08:00 -Until 18:00 -Days mon,tue,wed,thu,fri   # work hours only
+KeepAlive.bat -From 22:00 -Until 06:00 -BatteryMode pause-on-battery  # overnight, battery friendly
+KeepAlive.bat -RunFor 2h                                 # stop after two hours
+KeepAlive.bat -RunUntil 17:00                            # stop at 17:00
 ```
 
 The CLI prints each phase transition with a live countdown. Stop it with **Ctrl+C**.
@@ -77,6 +88,8 @@ Settings from the GUI are saved to `KeepAlive.settings.json` next to the script 
 
 - **It knows when to stay out of the way.** With an idle threshold set, it only taps after you have actually been idle; the no-tap list and fullscreen detection pause input for chosen apps (presentations, meetings). `-DryRun` prints the intended schedule without touching anything.
 - **Only one instance runs** (named mutex). A second launch focuses the existing window or reports exit code 2.
+- **It runs on your schedule.** Time-of-day windows (with overnight support and weekday filters), a run-for duration, or a run-until clock time end the session on their own. Outside the window it waits with no input and no power claim.
+- **Laptop friendly.** The battery modes pause input (or refuse to claim a power request) when unplugged, and locking the session pauses everything until you unlock.
 - **Shift is the safe default.** A lone Shift tap is ignored by every app. Ctrl is mostly safe too; Alt can focus a menu bar, and ScrollLock visibly toggles its keyboard light.
 - **It does not bypass policy.** Group policy or a corporate idle policy can still lock the session regardless of activity.
 - Kill it cleanly: Stop button / Ctrl+C in the CLI, or Exit from the tray icon. The key is always released immediately after each press, so killing it mid-cycle never leaves a stuck modifier key.

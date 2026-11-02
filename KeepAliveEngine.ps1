@@ -14,6 +14,17 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 Add-Type -MemberDefinition @'
+[DllImport("kernel32.dll")]
+public static extern bool GetSystemPowerStatus(ref SYSTEM_POWER_STATUS lpSystemPowerStatus);
+
+[StructLayout(LayoutKind.Sequential)]
+public struct SYSTEM_POWER_STATUS {
+    public byte ACLineStatus; public byte BatteryFlag; public byte BatteryLifePercent;
+    public byte SystemStatusFlag; public uint BatteryLifeTime; public uint BatteryFullLifeTime;
+}
+'@ -Name "KAp" -Namespace "Win32" -ErrorAction SilentlyContinue
+
+Add-Type -MemberDefinition @'
 [DllImport("user32.dll")]
 public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
 
@@ -108,6 +119,109 @@ function Test-KAFullscreen {
     }
 }
 
+# ---------------- power / battery ----------------
+# Returns: 'ac', 'battery' or 'unknown' (255 = no battery info, i.e. desktop).
+function Get-KAPowerSource {
+    try {
+        $s = New-Object Win32.KAp+SYSTEM_POWER_STATUS
+        if ([Win32.KAp]::GetSystemPowerStatus([ref]$s)) {
+            switch ($s.ACLineStatus) {
+                1 { return 'ac' }
+                0 { return 'battery' }
+                default { return 'unknown' }
+            }
+        }
+    } catch { }
+    return 'unknown'
+}
+
+# Pure decision so it can be tested without touching hardware.
+function Test-KABatteryAllows {
+    param($BatteryMode, $PowerSource)
+    if (-not $BatteryMode -or $BatteryMode -eq 'ignore') { return $true }
+    if ($PowerSource -eq 'battery') { return $false }
+    return $true
+}
+
+# ---------------- schedule window ----------------
+# $From / $Until are 'HH:mm' strings ('' = no window); $Days is an array of
+# day names ('' = every day). Returns @{ InWindow = bool; NextStart = DateTime }.
+function Test-KAInSchedule {
+    param($From, $Until, $Days, $Now = (Get-Date))
+    if (-not $From -or -not $Until) { return @{ InWindow = $true; NextStart = $null } }
+
+    if ($Days -and @($Days).Count -gt 0) {
+        $dayOk = $false
+        foreach ($d in @($Days)) {
+            if ($d.Trim() -and $Now.DayOfWeek.ToString().ToLower().StartsWith($d.Trim().Substring(0, 3).ToLower())) { $dayOk = $true }
+        }
+        if (-not $dayOk) {
+            # find the next scheduled day at $From
+            $next = $Now.Date.AddDays(1)
+            for ($i = 0; $i -lt 8; $i++) {
+                $cand = $Now.Date.AddDays($i)
+                $match = $false
+                foreach ($d in @($Days)) {
+                    if ($d.Trim() -and $cand.DayOfWeek.ToString().ToLower().StartsWith($d.Trim().Substring(0, 3).ToLower())) { $match = $true }
+                }
+                if ($match) { $next = $cand; break }
+            }
+            $fh = 0; $fm = 0
+            if ($From -match '^(\d{1,2}):(\d{2})$') { $fh = [int]$Matches[1]; $fm = [int]$Matches[2] }
+            return @{ InWindow = $false; NextStart = $next.AddHours($fh).AddMinutes($fm) }
+        }
+    }
+
+    $fh = 0; $fm = 0; $uh = 23; $um = 59
+    if ($From -match '^(\d{1,2}):(\d{2})$') { $fh = [int]$Matches[1]; $fm = [int]$Matches[2] }
+    if ($Until -match '^(\d{1,2}):(\d{2})$') { $uh = [int]$Matches[1]; $um = [int]$Matches[2] }
+    $minutesNow = $Now.Hour * 60 + $Now.Minute
+    $start = $fh * 60 + $fm
+    $end = $uh * 60 + $um
+    $inWindow = if ($start -le $end) { ($minutesNow -ge $start -and $minutesNow -lt $end) } else { ($minutesNow -ge $start -or $minutesNow -lt $end) }
+    if ($inWindow) { return @{ InWindow = $true; NextStart = $null } }
+
+    # next start today or tomorrow
+    $candidate = $Now.Date.AddHours($fh).AddMinutes($fm)
+    if ($candidate -le $Now) { $candidate = $candidate.AddDays(1) }
+    return @{ InWindow = $false; NextStart = $candidate }
+}
+
+# Parses 'HH:mm' -> today at that time; past times become tomorrow for
+# -RunUntil (a stop time that already passed means "stop immediately").
+function Convert-KATimeOfDay {
+    param([string]$Value, [switch]$PastMeansTomorrow)
+    if ($Value -notmatch '^(\d{1,2}):(\d{2})$') { return $null }
+    $h = [int]$Matches[1]; $m = [int]$Matches[2]
+    if ($h -gt 23 -or $m -gt 59) { return $null }
+    $t = (Get-Date).Date.AddHours($h).AddMinutes($m)
+    if ($t -le (Get-Date)) { $t = $t.AddDays(1) }
+    return $t
+}
+
+# Parses '1h30m', '90m', '45s' -> total minutes (0 when unparsable).
+function Convert-KADuration {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return 0 }
+    $total = 0
+    foreach ($m in [regex]::Matches($Value, '(\d+)\s*h')) { $total += [int]$m.Groups[1].Value * 60 }
+    foreach ($m in [regex]::Matches($Value, '(\d+)\s*m')) { $total += [int]$m.Groups[1].Value }
+    foreach ($m in [regex]::Matches($Value, '(\d+)\s*s')) { $total += ([int]$m.Groups[1].Value / 60.0) }
+    return $total
+}
+
+function Split-KADayList {
+    param([string[]]$Names)
+    $out = @()
+    foreach ($n in @($Names)) {
+        foreach ($piece in ($n -split ',')) {
+            $p = $piece.Trim()
+            if ($p) { $out += $p }
+        }
+    }
+    return $out
+}
+
 # ---------------- power request ----------------
 function Set-KAPowerAwake {
     param([switch]$DisplayOnly, [switch]$AwayMode, [switch]$Suppress)
@@ -154,6 +268,8 @@ function Get-KASuppressionReason {
     param($Cfg)
     if (-not $Cfg) { return '' }
 
+    if (Test-KASessionSuspended) { return 'session locked' }
+
     $idle = Get-KAIdleSeconds
     if ($Cfg.IdleThreshold -gt 0 -and $idle -lt [double]$Cfg.IdleThreshold) {
         return "user active (idle $([int]$idle)s < $($Cfg.IdleThreshold)s)"
@@ -168,7 +284,54 @@ function Get-KASuppressionReason {
             return "fullscreen app '$fg'"
         }
     }
+
+    # battery rules: pure decision, hardware queried once per call
+    if ($Cfg.BatteryMode -and $Cfg.BatteryMode -ne 'ignore') {
+        $source = Get-KAPowerSource
+        if (-not (Test-KABatteryAllows -BatteryMode $Cfg.BatteryMode -PowerSource $source)) {
+            if ($source -eq 'battery') { return 'on battery' }
+        }
+    }
     return ''
+}
+
+# ---------------- session lock/resume ----------------
+# Registered by the frontends (CLI/GUI). While suspended, the engine still
+# ticks but never acts - the session is locked so input is meaningless.
+$script:KASessionSuspended = $false
+
+function Suspend-KASession {
+    $script:KASessionSuspended = $true
+}
+
+function Resume-KASession {
+    $script:KASessionSuspended = $false
+}
+
+function Test-KASessionSuspended { return $script:KASessionSuspended }
+
+function Register-KASessionEvents {
+    try {
+        $null = [Microsoft.Win32.SystemEvents]::add_SessionSwitch({
+            if ($EventArgs.Reason -eq [Microsoft.Win32.SessionSwitchReason]::SessionLock) {
+                Suspend-KASession | Out-Null
+            } elseif ($EventArgs.Reason -eq [Microsoft.Win32.SessionSwitchReason]::SessionUnlock) {
+                Resume-KASession | Out-Null
+            }
+        })
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# Power claim only when the battery mode allows it.
+function Test-KAShouldClaimPower {
+    param($State)
+    $Cfg = $State.Cfg
+    if (-not $Cfg.PowerRequest) { return $false }
+    $source = Get-KAPowerSource
+    return (Test-KABatteryAllows -BatteryMode $Cfg.BatteryMode -PowerSource $source)
 }
 
 # ---------------- engine ----------------
@@ -182,9 +345,16 @@ function Initialize-KAEngine {
         [string]$InputMode = 'key',
         [switch]$PowerRequest,
         [double]$IdleThreshold = 0,
-        [string[]]$Blacklist = @(),
+        [string[]]$BlackList = @(),
         [switch]$RespectFullscreen,
-        [switch]$DryRun
+        [switch]$DryRun,
+        [string]$From = '',
+        [string]$Until = '',
+        [string[]]$Days = @(),
+        [string]$RunFor = '',
+        [string]$RunUntil = '',
+        [ValidateSet('ignore', 'require-ac', 'pause-on-battery')]
+        [string]$BatteryMode = 'ignore'
     )
 
     $state = [ordered]@{
@@ -196,10 +366,16 @@ function Initialize-KAEngine {
             InputMode         = $InputMode
             PowerRequest      = [bool]$PowerRequest
             IdleThreshold     = $IdleThreshold
-            Blacklist         = @($Blacklist)
+            Blacklist         = @($BlackList)
             RespectFullscreen = [bool]$RespectFullscreen
             DryRun            = [bool]$DryRun
+            From              = $From
+            Until             = $Until
+            Days              = @($Days)
+            BatteryMode       = $BatteryMode
         }
+        StopAt           = $null
+        ScheduleEnded    = $false
         Phase            = 'STOPPED'
         PhaseEnd         = (Get-Date)
         PhaseStart       = (Get-Date)
@@ -209,6 +385,17 @@ function Initialize-KAEngine {
         StartedAt        = $null
         SuppressedSince  = $null
         LastReason       = ''
+    }
+
+    # --RunFor <1h30m> -> stop this many minutes after Start.
+    if ($RunFor) {
+        $mins = Convert-KADuration $RunFor
+        if ($mins -gt 0) { $state.StopAt = (Get-Date).AddMinutes($mins) }
+    }
+    # --RunUntil HH:mm -> stop at that clock time (past times roll to tomorrow).
+    if ($RunUntil) {
+        $t = Convert-KATimeOfDay $RunUntil
+        if ($t) { $state.StopAt = $t }
     }
     return $state
 }
@@ -222,7 +409,7 @@ function Start-KACycle {
     $State.LastPress = $null
     $State.StartedAt = $now
     $State.PressCount = 0
-    if ($State.Cfg.PowerRequest) { Set-KAPowerAwake -Suppress:$State.Cfg.DryRun }
+    if (Test-KAShouldClaimPower $State) { Set-KAPowerAwake -Suppress:$State.Cfg.DryRun }
 }
 
 function Stop-KACycle {
@@ -241,6 +428,35 @@ function Invoke-KATick {
         $Cfg = $State.Cfg
         $now = Get-Date
         $remaining = ($State.PhaseEnd - $now).TotalSeconds
+
+        # ---- scheduled end of the whole session ----
+        if ($State.StopAt -and $now -ge $State.StopAt -and $State.Phase -ne 'STOPPED') {
+            Stop-KACycle $State
+            $State.ScheduleEnded = $true
+            $events += 'Run window ended - stopped'
+            return @{ Events = $events; Ended = $true }
+        }
+
+        # ---- schedule window (time of day / days) ----
+        $sched = Test-KAInSchedule -From $Cfg.From -Until $Cfg.Until -Days $Cfg.Days -Now $now
+        if (-not $sched.InWindow) {
+            if ($State.Phase -ne 'SCHEDULED') {
+                $State.Phase = 'SCHEDULED'
+                if ($Cfg.PowerRequest) { Clear-KAPowerAwake -Suppress:$Cfg.DryRun }
+                $nextText = if ($sched.NextStart) { Format-KASpan (($sched.NextStart - $now).TotalSeconds) } else { 'unknown' }
+                $events += "Outside schedule - waiting (next window in $nextText)"
+            }
+            # while outside the window: no power request, no input
+            return @{ Events = $events }
+        }
+        if ($State.Phase -eq 'SCHEDULED') {
+            $State.Phase = 'ACTIVE'
+            $State.PhaseStart = $now
+            $State.PhaseEnd = $now.AddMinutes([Math]::Max(0.016, [double]$Cfg.ActiveMinutes))
+            $State.LastPress = $null
+            if (Test-KAShouldClaimPower $State) { Set-KAPowerAwake -Suppress:$Cfg.DryRun }
+            $events += 'Schedule window started - ACTIVE'
+        }
 
         if ($State.Phase -eq 'ACTIVE') {
 
@@ -301,7 +517,7 @@ function Invoke-KATick {
                 $State.PhaseStart = $now
                 $State.PhaseEnd = $now.AddMinutes([double]$Cfg.ActiveMinutes)
                 $State.LastPress = $null
-                if ($Cfg.PowerRequest) { Set-KAPowerAwake -Suppress:$Cfg.DryRun }
+                if (Test-KAShouldClaimPower $State) { Set-KAPowerAwake -Suppress:$Cfg.DryRun }
                 $events += "ACTIVE started - $($Cfg.ActiveMinutes) min"
             }
         }

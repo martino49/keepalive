@@ -51,6 +51,12 @@ function Load-Settings {
                 Blacklist = @($j.Blacklist)
                 PowerRequest = [bool]$j.PowerRequest
                 RespectFullscreen = [bool]$j.RespectFullscreen
+                From = "$($j.From)"
+                Until = "$($j.Until)"
+                Days = @($j.Days)
+                RunFor = "$($j.RunFor)"
+                RunUntil = "$($j.RunUntil)"
+                BatteryMode = "$($j.BatteryMode)"
             }
         }
     } catch {
@@ -66,6 +72,12 @@ function Load-Settings {
         Blacklist = @()
         PowerRequest = $false
         RespectFullscreen = $false
+        From = ''
+        Until = ''
+        Days = @()
+        RunFor = ''
+        RunUntil = ''
+        BatteryMode = 'ignore'
     }
 }
 
@@ -81,6 +93,12 @@ function Save-Settings {
             Blacklist         = @($txtBlacklist.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
             PowerRequest      = $chkPower.Checked
             RespectFullscreen = $chkFullscreen.Checked
+            From              = $txtFrom.Text.Trim()
+            Until             = $txtUntil.Text.Trim()
+            Days              = @($txtDays.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            RunFor            = $txtRunFor.Text.Trim()
+            RunUntil          = $txtRunUntil.Text.Trim()
+            BatteryMode       = $cmbBattery.SelectedItem.ToString()
         } | ConvertTo-Json | Set-Content -Path $script:SettingsFile -Encoding ASCII
     } catch {
         # persistence is a convenience, never a failure
@@ -98,8 +116,8 @@ function Write-Log([string]$Line) {
 # ---------------- window ----------------
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'KeepAlive'
-$form.Size = New-Object System.Drawing.Size(470, 660)
-$form.MinimumSize = New-Object System.Drawing.Size(470, 660)
+$form.Size = New-Object System.Drawing.Size(470, 800)
+$form.MinimumSize = New-Object System.Drawing.Size(470, 800)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -126,7 +144,7 @@ $hdrSub.Parent = $form
 # --- settings group ---
 $grpSettings = New-Object System.Windows.Forms.GroupBox
 $grpSettings.Text = 'Settings'
-$grpSettings.Left = 22; $grpSettings.Top = 68; $grpSettings.Width = 410; $grpSettings.Height = 276
+$grpSettings.Left = 22; $grpSettings.Top = 68; $grpSettings.Width = 410; $grpSettings.Height = 352
 $grpSettings.ForeColor = $C_MUTED
 $grpSettings.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
 $grpSettings.Parent = $form
@@ -185,8 +203,33 @@ Add-RowLabel $grpSettings 'Idle sec (0 = off)' 95 232 46 | Out-Null
 $txtBlacklist = New-KATextBox $grpSettings 118 126 270 ($saved.Blacklist -join ', ')
 Add-RowLabel $grpSettings 'No-tap list' 129 18 60 | Out-Null
 
+# row 5: schedule window (from / run-for)
+$txtFrom = New-KATextBox $grpSettings 118 158 110 $saved.From
+Add-RowLabel $grpSettings 'Sched from' 161 18 60 | Out-Null
+$txtRunFor = New-KATextBox $grpSettings 278 158 110 $saved.RunFor
+Add-RowLabel $grpSettings 'Run for' 161 232 46 | Out-Null
+
+# row 6: schedule until / run until
+$txtUntil = New-KATextBox $grpSettings 118 184 110 $saved.Until
+Add-RowLabel $grpSettings 'Sched to' 187 18 60 | Out-Null
+$txtRunUntil = New-KATextBox $grpSettings 278 184 110 $saved.RunUntil
+Add-RowLabel $grpSettings 'Run until' 187 232 46 | Out-Null
+
+# row 7: days / battery mode
+$txtDays = New-KATextBox $grpSettings 118 210 110 ($saved.Days -join ', ')
+Add-RowLabel $grpSettings 'Days' 213 18 60 | Out-Null
+$cmbBattery = New-Object System.Windows.Forms.ComboBox
+$cmbBattery.Left = 278; $cmbBattery.Top = 209; $cmbBattery.Width = 110
+$cmbBattery.DropDownStyle = 'DropDownList'
+$cmbBattery.Items.AddRange(@('ignore', 'require-ac', 'pause-on-battery'))
+$battIndex = @('ignore', 'require-ac', 'pause-on-battery').IndexOf($saved.BatteryMode)
+$cmbBattery.SelectedIndex = if ($battIndex -ge 0) { $battIndex } else { 0 }
+$cmbBattery.BackColor = $C_FIELD; $cmbBattery.ForeColor = $C_TEXT; $cmbBattery.FlatStyle = 'Flat'
+$cmbBattery.Parent = $grpSettings
+Add-RowLabel $grpSettings 'Battery' 213 232 46 | Out-Null
+
 $btnTest = New-Object System.Windows.Forms.Button
-$btnTest.Left = 118; $btnTest.Top = 156; $btnTest.Width = 110; $btnTest.Height = 24
+$btnTest.Left = 118; $btnTest.Top = 238; $btnTest.Width = 110; $btnTest.Height = 24
 $btnTest.Text = 'Test key / mouse'
 $btnTest.FlatStyle = 'Flat'; $btnTest.FlatAppearance.BorderSize = 0
 $btnTest.BackColor = $C_FIELD; $btnTest.ForeColor = $C_MUTED
@@ -195,28 +238,28 @@ $btnTest.Parent = $grpSettings
 
 # row 5: checkboxes
 $chkPower = New-Object System.Windows.Forms.CheckBox
-$chkPower.Left = 118; $chkPower.Top = 190; $chkPower.Width = 150
+$chkPower.Left = 118; $chkPower.Top = 262; $chkPower.Width = 150
 $chkPower.Text = 'Windows power request'
 $chkPower.ForeColor = $C_MUTED
 $chkPower.Checked = [bool]$saved.PowerRequest
 $chkPower.Parent = $grpSettings
 
 $chkFullscreen = New-Object System.Windows.Forms.CheckBox
-$chkFullscreen.Left = 278; $chkFullscreen.Top = 190; $chkFullscreen.Width = 130
+$chkFullscreen.Left = 278; $chkFullscreen.Top = 262; $chkFullscreen.Width = 130
 $chkFullscreen.Text = 'Pause in fullscreen'
 $chkFullscreen.ForeColor = $C_MUTED
 $chkFullscreen.Checked = [bool]$saved.RespectFullscreen
 $chkFullscreen.Parent = $grpSettings
 
 $chkDryRun = New-Object System.Windows.Forms.CheckBox
-$chkDryRun.Left = 118; $chkDryRun.Top = 212; $chkDryRun.Width = 150
+$chkDryRun.Left = 118; $chkDryRun.Top = 284; $chkDryRun.Width = 150
 $chkDryRun.Text = 'Dry run (log only)'
 $chkDryRun.ForeColor = $C_AMBER
 $chkDryRun.Parent = $grpSettings
 
 $hint = New-Object System.Windows.Forms.Label
 $hint.Text = 'Only acts after real idle; pauses for listed apps and fullscreen windows.' + [Environment]::NewLine + 'Dry run plans the schedule without touching anything.'
-$hint.Left = 118; $hint.Top = 236; $hint.Width = 280; $hint.Height = 32
+$hint.Left = 118; $hint.Top = 308; $hint.Width = 280; $hint.Height = 32
 $hint.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $hint.ForeColor = $C_FAINT
 $hint.Parent = $grpSettings
@@ -224,7 +267,7 @@ $hint.Parent = $grpSettings
 # --- status group ---
 $grpStatus = New-Object System.Windows.Forms.GroupBox
 $grpStatus.Text = 'Status'
-$grpStatus.Left = 22; $grpStatus.Top = 354; $grpStatus.Width = 410; $grpStatus.Height = 212
+$grpStatus.Left = 22; $grpStatus.Top = 436; $grpStatus.Width = 410; $grpStatus.Height = 212
 $grpStatus.ForeColor = $C_MUTED
 $grpStatus.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
 $grpStatus.Parent = $form
@@ -297,7 +340,7 @@ Write-Log 'Idle - not started.'
 
 # --- buttons ---
 $btnStart = New-Object System.Windows.Forms.Button
-$btnStart.Left = 22; $btnStart.Top = 578; $btnStart.Width = 120; $btnStart.Height = 40
+$btnStart.Left = 22; $btnStart.Top = 660; $btnStart.Width = 120; $btnStart.Height = 40
 $btnStart.Text = 'Start'
 $btnStart.FlatStyle = 'Flat'; $btnStart.FlatAppearance.BorderSize = 0
 $btnStart.BackColor = $C_ACCENT; $btnStart.ForeColor = [System.Drawing.Color]::White
@@ -305,7 +348,7 @@ $btnStart.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
 $btnStart.Parent = $form
 
 $btnStop = New-Object System.Windows.Forms.Button
-$btnStop.Left = 152; $btnStop.Top = 578; $btnStop.Width = 120; $btnStop.Height = 40
+$btnStop.Left = 152; $btnStop.Top = 660; $btnStop.Width = 120; $btnStop.Height = 40
 $btnStop.Text = 'Stop'
 $btnStop.Enabled = $false
 $btnStop.FlatStyle = 'Flat'; $btnStop.FlatAppearance.BorderSize = 0
@@ -314,7 +357,7 @@ $btnStop.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
 $btnStop.Parent = $form
 
 $btnHide = New-Object System.Windows.Forms.Button
-$btnHide.Left = 282; $btnHide.Top = 578; $btnHide.Width = 150; $btnHide.Height = 40
+$btnHide.Left = 282; $btnHide.Top = 660; $btnHide.Width = 150; $btnHide.Height = 40
 $btnHide.Text = 'Hide to tray'
 $btnHide.FlatStyle = 'Flat'; $btnHide.FlatAppearance.BorderSize = 0
 $btnHide.BackColor = $C_FIELD; $btnHide.ForeColor = $C_TEXT
@@ -322,7 +365,7 @@ $btnHide.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
 $btnHide.Parent = $form
 
 $lblFooter = New-Object System.Windows.Forms.Label
-$lblFooter.Left = 22; $lblFooter.Top = 626; $lblFooter.Width = 410; $lblFooter.Height = 30
+$lblFooter.Left = 22; $lblFooter.Top = 708; $lblFooter.Width = 410; $lblFooter.Height = 30
 $lblFooter.Text = 'Closing the window keeps running in the tray. Exit from the tray icon or press Stop.'
 $lblFooter.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $lblFooter.ForeColor = $C_FAINT
@@ -378,6 +421,10 @@ $timer.Add_Tick({
         $script:lblPhase.Text = 'REST'
         $script:lblPhase.ForeColor = $C_FAINT
         $tray.Text = 'KeepAlive - REST'
+    } elseif ($script:State.Phase -eq 'SCHEDULED') {
+        $script:lblPhase.Text = 'WAITING'
+        $script:lblPhase.ForeColor = $C_AMBER
+        $tray.Text = 'KeepAlive - waiting for schedule window'
     }
 })
 
@@ -403,6 +450,28 @@ function Read-KAInputs {
     if ($mode -eq 'none' -and -not $chkPower.Checked) {
         Warn 'Action "none" without the power request does nothing.'; return $null
     }
+    $from = $txtFrom.Text.Trim(); $until = $txtUntil.Text.Trim()
+    if ($from -or $until) {
+        if (-not $from -or -not $until) {
+            Warn 'Schedule needs both a from and a to time.'; return $null
+        }
+        if ($from -notmatch '^\d{1,2}:\d{2}$' -or $until -notmatch '^\d{1,2}:\d{2}$') {
+            Warn 'Schedule times must be HH:mm.'; return $null
+        }
+    }
+    $runFor = $txtRunFor.Text.Trim(); $runUntil = $txtRunUntil.Text.Trim()
+    if ($runFor -and (Convert-KADuration $runFor) -le 0) {
+        Warn 'Run for must look like 1h30m or 90m.'; return $null
+    }
+    if ($runUntil -and $runUntil -notmatch '^\d{1,2}:\d{2}$') {
+        Warn 'Run until must be HH:mm.'; return $null
+    }
+    $days = @($txtDays.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    foreach ($d in $days) {
+        if ($d.Substring(0, [Math]::Min(3, $d.Length)).ToLower() -notin @('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')) {
+            Warn "Day '$d' must be mon..sun."; return $null
+        }
+    }
     return @{
         Interval = $interval; Active = $active; Rest = $rest; IdleThreshold = $idle
         Key = $cmbKey.SelectedItem.ToString()
@@ -410,6 +479,9 @@ function Read-KAInputs {
         Blacklist = @($txtBlacklist.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
         PowerRequest = $chkPower.Checked
         RespectFullscreen = $chkFullscreen.Checked
+        From = $from; Until = $until; Days = $days
+        RunFor = $runFor; RunUntil = $runUntil
+        BatteryMode = $cmbBattery.SelectedItem.ToString()
     }
 }
 
@@ -431,10 +503,17 @@ function Start-KeepAlive {
         -IdleThreshold $cfg.IdleThreshold `
         -BlackList $cfg.Blacklist `
         -RespectFullscreen:$cfg.RespectFullscreen `
-        -DryRun:$chkDryRun.Checked
+        -DryRun:$chkDryRun.Checked `
+        -From $cfg.From `
+        -Until $cfg.Until `
+        -Days $cfg.Days `
+        -RunFor $cfg.RunFor `
+        -RunUntil $cfg.RunUntil `
+        -BatteryMode $cfg.BatteryMode
 
     if (-not $chkDryRun.Checked) {
         $script:Mutex = New-KAMutex
+        $null = Register-KASessionEvents
     }
 
     Start-KACycle $script:State
@@ -442,12 +521,15 @@ function Start-KeepAlive {
     if ($cfg.PowerRequest) { Write-Log 'Power request claimed' }
     if ($cfg.IdleThreshold -gt 0) { Write-Log "Only acts after $($cfg.IdleThreshold)s idle" }
     if ($cfg.Blacklist.Count) { Write-Log "No-tap list: $($cfg.Blacklist -join ', ')" }
+    if ($cfg.From -and $cfg.Until) { Write-Log "Schedule $($cfg.From)-$($cfg.Until)$(if ($cfg.Days.Count) { " on $($cfg.Days -join ', ')" })" }
+    if ($script:State.StopAt) { Write-Log "Run window ends $($script:State.StopAt.ToString('HH:mm'))" }
+    if ($cfg.BatteryMode -ne 'ignore') { Write-Log "Battery mode $($cfg.BatteryMode)" }
     if ($chkDryRun.Checked) { Write-Log 'DRY RUN - nothing is pressed or claimed' }
 
     $btnStart.Enabled = $false
     $btnStop.Enabled = $true
     $btnTest.Enabled = $false
-    foreach ($c in @($cmbKey, $cmbMode, $txtInterval, $txtActive, $txtRest, $txtIdle, $txtBlacklist)) { $c.Enabled = $false }
+    foreach ($c in @($cmbKey, $cmbMode, $txtInterval, $txtActive, $txtRest, $txtIdle, $txtBlacklist, $txtFrom, $txtUntil, $txtDays, $txtRunFor, $txtRunUntil, $cmbBattery)) { $c.Enabled = $false }
     Save-Settings
     $tray.Text = 'KeepAlive - ACTIVE'
     $timer.Start()
@@ -469,7 +551,7 @@ function Stop-KeepAlive {
     $btnStart.Enabled = $true
     $btnStop.Enabled = $false
     $btnTest.Enabled = $true
-    foreach ($c in @($cmbKey, $cmbMode, $txtInterval, $txtActive, $txtRest, $txtIdle, $txtBlacklist)) { $c.Enabled = $true }
+    foreach ($c in @($cmbKey, $cmbMode, $txtInterval, $txtActive, $txtRest, $txtIdle, $txtBlacklist, $txtFrom, $txtUntil, $txtDays, $txtRunFor, $txtRunUntil, $cmbBattery)) { $c.Enabled = $true }
     $tray.Text = 'KeepAlive - stopped'
     $script:State = $null
 }
