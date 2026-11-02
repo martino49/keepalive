@@ -1,6 +1,6 @@
 # KeepAlive
 
-Windows keep-awake tool. Keeps your PC awake in human-like cycles and gets out of the way — no console flags to remember, no window babysitting.
+Windows keep-awake tool. Keeps your PC awake in human-like cycles and gets out of the way - no console flags to remember, no window babysitting.
 
 **One command:** double-click `KeepAlive.bat`.
 
@@ -13,7 +13,7 @@ The tool runs in repeating two-phase cycles:
 | Phase | What happens |
 |---|---|
 | **ACTIVE** (default 60 min) | Presses the chosen key once every N seconds. A lone Shift tap doesn't register as input in any app, so the machine stays awake without typing anything or triggering shortcuts. |
-| **REST** (default 2 min) | Zero input — no keyboard, no mouse, nothing. A genuine idle window. |
+| **REST** (default 2 min) | Zero input - no keyboard, no mouse, nothing. A genuine idle window. |
 
 Then it repeats: ACTIVE -> REST -> ACTIVE ... until you stop it.
 
@@ -23,10 +23,10 @@ Then it repeats: ACTIVE -> REST -> ACTIVE ... until you stop it.
 
 `KeepAlive.bat` with **no arguments** opens the window:
 
-- **Settings** — key (Shift / Ctrl / Alt / ScrollLock), seconds between presses, active minutes, rest minutes
-- **Test key** — presses your chosen key once so you can confirm it's safe first
-- **Status** — live phase readout, phase countdown, tap counter, phase progress bar, session uptime, and a rolling activity log
-- **Start / Stop / Hide to tray** — closing the window keeps it running in the tray; right-click the tray icon to exit
+- **Settings** - key (Shift / Ctrl / Alt / ScrollLock), seconds between presses, active minutes, rest minutes
+- **Test key** - presses your chosen key once so you can confirm it's safe first
+- **Status** - live phase readout, phase countdown, tap counter, phase progress bar, session uptime, and a rolling activity log
+- **Start / Stop / Hide to tray** - closing the window keeps it running in the tray; right-click the tray icon to exit
 - Settings are remembered between runs
 
 ### Command line
@@ -57,7 +57,7 @@ The CLI prints each phase transition with a live countdown. Stop it with **Ctrl+
 | `KeepAliveUI.ps1` | WinForms GUI (engine, tray, status, settings persistence) |
 | `KeepAlive.ps1` | CLI version, same cycle engine |
 
-Settings from the GUI are saved to `KeepAlive.settings.json` next to the script (gitignored — your machine, your schedule).
+Settings from the GUI are saved to `KeepAlive.settings.json` next to the script (gitignored - your machine, your schedule).
 
 ## Requirements
 
