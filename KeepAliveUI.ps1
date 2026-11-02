@@ -1,23 +1,19 @@
-# KeepAliveUI.ps1 - GUI for the keep-awake tool.
-# One command (KeepAlive.bat) opens this window; everything else (key choice,
-# timing, the ACTIVE/REST cycle, tray, settings memory) is driven from the UI.
+# KeepAliveUI.ps1 - GUI for the keep-awake tool. Engine lives in
+# KeepAliveEngine.ps1 (shared with the CLI).
 #
-#   ACTIVE  : presses the chosen key every N seconds
+#   ACTIVE  : key taps / mouse nudges / a Windows power request, guided by
+#             real-idle detection, an app no-tap list and fullscreen awareness
 #   REST    : zero input (no keyboard, no mouse, nothing)
-#   cycles  : ACTIVE -> REST -> ACTIVE ... until you stop it (or exit)
 #
 # Settings persist to KeepAlive.settings.json next to this script.
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-Add-Type -MemberDefinition @'
-[DllImport("user32.dll")]
-public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
-'@ -Name "K" -Namespace "Win32"
+
+. (Join-Path $PSScriptRoot 'KeepAliveEngine.ps1')
 
 # ---------------- palette ----------------
 $C_BG      = [System.Drawing.Color]::FromArgb(24, 24, 27)
-$C_PANEL   = [System.Drawing.Color]::FromArgb(32, 32, 36)
 $C_FIELD   = [System.Drawing.Color]::FromArgb(39, 39, 42)
 $C_TEXT    = [System.Drawing.Color]::FromArgb(250, 250, 250)
 $C_MUTED   = [System.Drawing.Color]::FromArgb(161, 161, 170)
@@ -27,34 +23,15 @@ $C_GREEN   = [System.Drawing.Color]::FromArgb(34, 197, 94)
 $C_AMBER   = [System.Drawing.Color]::FromArgb(251, 191, 36)
 $C_STOPPED = [System.Drawing.Color]::FromArgb(113, 113, 122)
 
-# ---------------- state ----------------
-$script:Running = $false
-$script:Phase = 'STOPPED'
-$script:PhaseEnd = (Get-Date)
-$script:LastPress = $null
-$script:PressCount = 0
-$script:NeverRest = $false
-$script:StartedAt = $null
-$script:Cfg = $null
-
-$VK = @{ Shift = 0x10; Ctrl = 0x11; Alt = 0x12; ScrollLock = 0x91 }
-
-function Get-KeyCode([string]$name) {
-    if ($VK.ContainsKey($name)) { return $VK[$name] }
-    return 0x10
-}
-
-function Format-Span([double]$Seconds) {
-    if ($Seconds -lt 0) { $Seconds = 0 }
-    $ts = [TimeSpan]::FromSeconds($Seconds)
-    if ($ts.TotalHours -ge 1) { return '{0:hh\:mm\:ss}' -f $ts }
-    return '{0:mm\:ss}' -f $ts
-}
-
-function Write-Log([string]$Line) {
-    $stamp = Get-Date -Format 'HH:mm:ss'
-    $script:lstLog.Items.Insert(0, "$stamp  $Line")
-    while ($script:lstLog.Items.Count -gt 6) { $script:lstLog.Items.RemoveAt(5) }
+# ---------------- single instance ----------------
+if (Test-KAAlreadyRunning) {
+    $focused = Show-KAExistingWindow 'KeepAlive'
+    if ($focused) {
+        [System.Windows.Forms.MessageBox]::Show('KeepAlive is already running - the existing window was focused.', 'KeepAlive') | Out-Null
+    } else {
+        [System.Windows.Forms.MessageBox]::Show('KeepAlive is already running (in the tray). Stop it first.', 'KeepAlive') | Out-Null
+    }
+    exit
 }
 
 # ---------------- settings persistence ----------------
@@ -66,33 +43,63 @@ function Load-Settings {
             $j = Get-Content $script:SettingsFile -Raw | ConvertFrom-Json
             return @{
                 Key = "$($j.Key)"
+                InputMode = "$($j.InputMode)"
                 Interval = [double]$j.Interval
                 Active = [double]$j.Active
                 Rest = [double]$j.Rest
+                IdleThreshold = [double]$j.IdleThreshold
+                Blacklist = @($j.Blacklist)
+                PowerRequest = [bool]$j.PowerRequest
+                RespectFullscreen = [bool]$j.RespectFullscreen
             }
         }
     } catch {
         # corrupt or unreadable settings should never block startup
     }
-    return @{ Key = 'Shift'; Interval = 60; Active = 60; Rest = 2 }
+    return @{
+        Key = 'Shift'
+        InputMode = 'key'
+        Interval = 60
+        Active = 60
+        Rest = 2
+        IdleThreshold = 0
+        Blacklist = @()
+        PowerRequest = $false
+        RespectFullscreen = $false
+    }
 }
 
 function Save-Settings {
-    param($Key, $Interval, $Active, $Rest)
     try {
-        @{ Key = $Key; Interval = $Interval; Active = $Active; Rest = $Rest } |
-            ConvertTo-Json |
-            Set-Content -Path $script:SettingsFile -Encoding ASCII
+        @{
+            Key               = $cmbKey.SelectedItem.ToString()
+            InputMode         = $cmbMode.SelectedItem.ToString()
+            Interval          = $txtInterval.Text.Trim()
+            Active            = $txtActive.Text.Trim()
+            Rest              = $txtRest.Text.Trim()
+            IdleThreshold     = $txtIdle.Text.Trim()
+            Blacklist         = @($txtBlacklist.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            PowerRequest      = $chkPower.Checked
+            RespectFullscreen = $chkFullscreen.Checked
+        } | ConvertTo-Json | Set-Content -Path $script:SettingsFile -Encoding ASCII
     } catch {
         # persistence is a convenience, never a failure
     }
 }
 
+$saved = Load-Settings
+
+function Write-Log([string]$Line) {
+    $stamp = Get-Date -Format 'HH:mm:ss'
+    $script:lstLog.Items.Insert(0, "$stamp  $Line")
+    while ($script:lstLog.Items.Count -gt 6) { $script:lstLog.Items.RemoveAt(5) }
+}
+
 # ---------------- window ----------------
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'KeepAlive'
-$form.Size = New-Object System.Drawing.Size(470, 520)
-$form.MinimumSize = New-Object System.Drawing.Size(470, 520)
+$form.Size = New-Object System.Drawing.Size(470, 660)
+$form.MinimumSize = New-Object System.Drawing.Size(470, 660)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -101,8 +108,6 @@ $form.BackColor = $C_BG
 $form.ForeColor = $C_TEXT
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 $form.Icon = [System.Drawing.SystemIcons]::Shield
-
-$saved = Load-Settings
 
 # --- header ---
 $hdr = New-Object System.Windows.Forms.Label
@@ -113,21 +118,21 @@ $hdr.ForeColor = $C_ACCENT
 $hdr.Parent = $form
 
 $hdrSub = New-Object System.Windows.Forms.Label
-$hdrSub.Text = 'ACTIVE presses a key - REST does nothing. Set it once, walk away.'
-$hdrSub.Left = 22; $hdrSub.Top = 40; $hdrSub.Width = 410; $hdrSub.Height = 18
+$hdrSub.Text = 'ACTIVE acts - REST does nothing. Set it once, walk away.'
+$hdrSub.Left = 22; $hdrSub.Top = 40; $hdrSub.Width = 420; $hdrSub.Height = 18
 $hdrSub.ForeColor = $C_MUTED
 $hdrSub.Parent = $form
 
 # --- settings group ---
 $grpSettings = New-Object System.Windows.Forms.GroupBox
 $grpSettings.Text = 'Settings'
-$grpSettings.Left = 22; $grpSettings.Top = 68; $grpSettings.Width = 410; $grpSettings.Height = 172
+$grpSettings.Left = 22; $grpSettings.Top = 68; $grpSettings.Width = 410; $grpSettings.Height = 276
 $grpSettings.ForeColor = $C_MUTED
 $grpSettings.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
 $grpSettings.Parent = $form
 
 function Add-RowLabel {
-    param($Parent, $Text, $Y, $X = 18, $Width = 150)
+    param($Parent, $Text, $Y, $X = 18, $Width = 120)
     $l = New-Object System.Windows.Forms.Label
     $l.Text = $Text; $l.Left = $X; $l.Top = $Y; $l.Width = $Width; $l.Height = 18
     $l.ForeColor = $C_MUTED
@@ -135,48 +140,83 @@ function Add-RowLabel {
     return $l
 }
 
+function New-KATextBox {
+    param($Parent, $X, $Y, $W = 120, $Value = '')
+    $t = New-Object System.Windows.Forms.TextBox
+    $t.Left = $X; $t.Top = $Y; $t.Width = $W; $t.Text = $Value
+    $t.BackColor = $C_FIELD; $t.ForeColor = $C_TEXT; $t.BorderStyle = 'FixedSingle'
+    $t.Parent = $Parent
+    return $t
+}
+
+# row 1: key + mode
 $cmbKey = New-Object System.Windows.Forms.ComboBox
-$cmbKey.Left = 250; $cmbKey.Top = 24; $cmbKey.Width = 130
+$cmbKey.Left = 118; $cmbKey.Top = 24; $cmbKey.Width = 110
 $cmbKey.DropDownStyle = 'DropDownList'
 $cmbKey.Items.AddRange(@('Shift', 'Ctrl', 'Alt', 'ScrollLock'))
-if ($VK.ContainsKey($saved.Key)) { $cmbKey.SelectedItem = $saved.Key } else { $cmbKey.SelectedItem = 'Shift' }
-$cmbKey.BackColor = $C_FIELD; $cmbKey.ForeColor = $C_TEXT
-$cmbKey.FlatStyle = 'Flat'
+if ($script:KA_VK -and $script:KA_VK.ContainsKey($saved.Key)) { $cmbKey.SelectedItem = $saved.Key } else { $cmbKey.SelectedItem = 'Shift' }
+$cmbKey.BackColor = $C_FIELD; $cmbKey.ForeColor = $C_TEXT; $cmbKey.FlatStyle = 'Flat'
 $cmbKey.Parent = $grpSettings
-Add-RowLabel $grpSettings 'Key to press' 27 | Out-Null
+Add-RowLabel $grpSettings 'Key' 27 18 60 | Out-Null
 
-$txtInterval = New-Object System.Windows.Forms.TextBox
-$txtInterval.Left = 250; $txtInterval.Top = 58; $txtInterval.Width = 130
-$txtInterval.Text = [int]$saved.Interval
-$txtInterval.BackColor = $C_FIELD; $txtInterval.ForeColor = $C_TEXT; $txtInterval.BorderStyle = 'FixedSingle'
-$txtInterval.Parent = $grpSettings
-Add-RowLabel $grpSettings 'Seconds between presses' 61 | Out-Null
+$cmbMode = New-Object System.Windows.Forms.ComboBox
+$cmbMode.Left = 278; $cmbMode.Top = 24; $cmbMode.Width = 110
+$cmbMode.DropDownStyle = 'DropDownList'
+$cmbMode.Items.AddRange(@('key', 'mouse', 'power', 'none'))
+$modeIndex = @('key', 'mouse', 'power', 'none').IndexOf($saved.InputMode)
+$cmbMode.SelectedIndex = if ($modeIndex -ge 0) { $modeIndex } else { 0 }
+$cmbMode.BackColor = $C_FIELD; $cmbMode.ForeColor = $C_TEXT; $cmbMode.FlatStyle = 'Flat'
+$cmbMode.Parent = $grpSettings
+Add-RowLabel $grpSettings 'Action' 27 250 26 | Out-Null
 
-$txtActive = New-Object System.Windows.Forms.TextBox
-$txtActive.Left = 250; $txtActive.Top = 92; $txtActive.Width = 130
-$txtActive.Text = $saved.Active
-$txtActive.BackColor = $C_FIELD; $txtActive.ForeColor = $C_TEXT; $txtActive.BorderStyle = 'FixedSingle'
-$txtActive.Parent = $grpSettings
-Add-RowLabel $grpSettings 'Active minutes  (0 = never rest)' 95 | Out-Null
+# row 2: interval + active
+$txtInterval = New-KATextBox $grpSettings 118 58 110 ([int]$saved.Interval)
+Add-RowLabel $grpSettings 'Seconds' 61 18 60 | Out-Null
+$txtActive = New-KATextBox $grpSettings 278 58 110 $saved.Active
+Add-RowLabel $grpSettings 'Active min (0 = no rest)' 61 232 46 | Out-Null
 
-$txtRest = New-Object System.Windows.Forms.TextBox
-$txtRest.Left = 250; $txtRest.Top = 126; $txtRest.Width = 130
-$txtRest.Text = $saved.Rest
-$txtRest.BackColor = $C_FIELD; $txtRest.ForeColor = $C_TEXT; $txtRest.BorderStyle = 'FixedSingle'
-$txtRest.Parent = $grpSettings
-Add-RowLabel $grpSettings 'Rest minutes  (0 = skip rest)' 129 | Out-Null
+# row 3: rest + idle
+$txtRest = New-KATextBox $grpSettings 118 92 110 $saved.Rest
+Add-RowLabel $grpSettings 'Rest min' 95 18 60 | Out-Null
+$txtIdle = New-KATextBox $grpSettings 278 92 110 ([int]$saved.IdleThreshold)
+Add-RowLabel $grpSettings 'Idle sec (0 = off)' 95 232 46 | Out-Null
+
+# row 4: blacklist + test
+$txtBlacklist = New-KATextBox $grpSettings 118 126 270 ($saved.Blacklist -join ', ')
+Add-RowLabel $grpSettings 'No-tap list' 129 18 60 | Out-Null
 
 $btnTest = New-Object System.Windows.Forms.Button
-$btnTest.Left = 18; $btnTest.Top = 126; $btnTest.Width = 110; $btnTest.Height = 26
-$btnTest.Text = 'Test key'
-$btnTest.FlatStyle = 'Flat'
-$btnTest.BackColor = $C_FIELD
-$btnTest.ForeColor = $C_MUTED
+$btnTest.Left = 118; $btnTest.Top = 156; $btnTest.Width = 110; $btnTest.Height = 24
+$btnTest.Text = 'Test key / mouse'
+$btnTest.FlatStyle = 'Flat'; $btnTest.FlatAppearance.BorderSize = 0
+$btnTest.BackColor = $C_FIELD; $btnTest.ForeColor = $C_MUTED
 $btnTest.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $btnTest.Parent = $grpSettings
+
+# row 5: checkboxes
+$chkPower = New-Object System.Windows.Forms.CheckBox
+$chkPower.Left = 118; $chkPower.Top = 190; $chkPower.Width = 150
+$chkPower.Text = 'Windows power request'
+$chkPower.ForeColor = $C_MUTED
+$chkPower.Checked = [bool]$saved.PowerRequest
+$chkPower.Parent = $grpSettings
+
+$chkFullscreen = New-Object System.Windows.Forms.CheckBox
+$chkFullscreen.Left = 278; $chkFullscreen.Top = 190; $chkFullscreen.Width = 130
+$chkFullscreen.Text = 'Pause in fullscreen'
+$chkFullscreen.ForeColor = $C_MUTED
+$chkFullscreen.Checked = [bool]$saved.RespectFullscreen
+$chkFullscreen.Parent = $grpSettings
+
+$chkDryRun = New-Object System.Windows.Forms.CheckBox
+$chkDryRun.Left = 118; $chkDryRun.Top = 212; $chkDryRun.Width = 150
+$chkDryRun.Text = 'Dry run (log only)'
+$chkDryRun.ForeColor = $C_AMBER
+$chkDryRun.Parent = $grpSettings
+
 $hint = New-Object System.Windows.Forms.Label
-$hint.Text = 'presses it once so you can see it is safe to use'
-$hint.Left = 134; $hint.Top = 130; $hint.Width = 220; $hint.Height = 18
+$hint.Text = 'Only acts after real idle; pauses for listed apps and fullscreen windows.' + [Environment]::NewLine + 'Dry run plans the schedule without touching anything.'
+$hint.Left = 118; $hint.Top = 236; $hint.Width = 280; $hint.Height = 32
 $hint.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $hint.ForeColor = $C_FAINT
 $hint.Parent = $grpSettings
@@ -184,7 +224,7 @@ $hint.Parent = $grpSettings
 # --- status group ---
 $grpStatus = New-Object System.Windows.Forms.GroupBox
 $grpStatus.Text = 'Status'
-$grpStatus.Left = 22; $grpStatus.Top = 250; $grpStatus.Width = 410; $grpStatus.Height = 212
+$grpStatus.Left = 22; $grpStatus.Top = 354; $grpStatus.Width = 410; $grpStatus.Height = 212
 $grpStatus.ForeColor = $C_MUTED
 $grpStatus.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
 $grpStatus.Parent = $form
@@ -203,24 +243,24 @@ $script:lblCountdown.Font = New-Object System.Drawing.Font('Consolas', 15)
 $script:lblCountdown.ForeColor = $C_TEXT
 $script:lblCountdown.TextAlign = 'MiddleRight'
 $script:lblCountdown.Parent = $grpStatus
-$lblCountdownHint = New-Object System.Windows.Forms.Label
-$lblCountdownHint.Left = 150; $lblCountdownHint.Top = 54; $lblCountdownHint.Width = 160
-$lblCountdownHint.Text = 'left in phase'
-$lblCountdownHint.Font = New-Object System.Drawing.Font('Segoe UI', 8)
-$lblCountdownHint.ForeColor = $C_FAINT
-$lblCountdownHint.TextAlign = 'TopRight'
-$lblCountdownHint.Parent = $grpStatus
+$lblCdHint = New-Object System.Windows.Forms.Label
+$lblCdHint.Left = 150; $lblCdHint.Top = 54; $lblCdHint.Width = 160
+$lblCdHint.Text = 'left in phase'
+$lblCdHint.Font = New-Object System.Drawing.Font('Segoe UI', 8)
+$lblCdHint.ForeColor = $C_FAINT
+$lblCdHint.TextAlign = 'TopRight'
+$lblCdHint.Parent = $grpStatus
 
 $script:lblTaps = New-Object System.Windows.Forms.Label
-$script:lblTaps.Left = 318; $script:lblTaps.Top = 26; $script:lblTaps.Width = 72; $script:lblTaps.Height = 30
+$script:lblTaps.Left = 318; $script:lblTaps.Top = 26; $script:lblTaps.Width = 74; $script:lblTaps.Height = 30
 $script:lblTaps.Text = '0'
 $script:lblTaps.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 15)
 $script:lblTaps.ForeColor = $C_TEXT
 $script:lblTaps.TextAlign = 'MiddleRight'
 $script:lblTaps.Parent = $grpStatus
 $lblTapsHint = New-Object System.Windows.Forms.Label
-$lblTapsHint.Left = 318; $lblTapsHint.Top = 54; $lblTapsHint.Width = 72
-$lblTapsHint.Text = 'key taps'
+$lblTapsHint.Left = 318; $lblTapsHint.Top = 54; $lblTapsHint.Width = 74
+$lblTapsHint.Text = 'actions'
 $lblTapsHint.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $lblTapsHint.ForeColor = $C_FAINT
 $lblTapsHint.TextAlign = 'TopRight'
@@ -238,8 +278,15 @@ $script:lblSchedule.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $script:lblSchedule.ForeColor = $C_FAINT
 $script:lblSchedule.Parent = $grpStatus
 
+$script:lblSuppress = New-Object System.Windows.Forms.Label
+$script:lblSuppress.Left = 18; $script:lblSuppress.Top = 120; $script:lblSuppress.Width = 374; $script:lblSuppress.Height = 18
+$script:lblSuppress.Text = ''
+$script:lblSuppress.Font = New-Object System.Drawing.Font('Segoe UI', 8)
+$script:lblSuppress.ForeColor = $C_AMBER
+$script:lblSuppress.Parent = $grpStatus
+
 $script:lstLog = New-Object System.Windows.Forms.ListBox
-$script:lstLog.Left = 18; $script:lstLog.Top = 128; $script:lstLog.Width = 374; $script:lstLog.Height = 66
+$script:lstLog.Left = 18; $script:lstLog.Top = 144; $script:lstLog.Width = 374; $script:lstLog.Height = 56
 $script:lstLog.BorderStyle = 'None'
 $script:lstLog.BackColor = $C_FIELD
 $script:lstLog.ForeColor = $C_MUTED
@@ -250,7 +297,7 @@ Write-Log 'Idle - not started.'
 
 # --- buttons ---
 $btnStart = New-Object System.Windows.Forms.Button
-$btnStart.Left = 22; $btnStart.Top = 474; $btnStart.Width = 120; $btnStart.Height = 40
+$btnStart.Left = 22; $btnStart.Top = 578; $btnStart.Width = 120; $btnStart.Height = 40
 $btnStart.Text = 'Start'
 $btnStart.FlatStyle = 'Flat'; $btnStart.FlatAppearance.BorderSize = 0
 $btnStart.BackColor = $C_ACCENT; $btnStart.ForeColor = [System.Drawing.Color]::White
@@ -258,7 +305,7 @@ $btnStart.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
 $btnStart.Parent = $form
 
 $btnStop = New-Object System.Windows.Forms.Button
-$btnStop.Left = 152; $btnStop.Top = 474; $btnStop.Width = 120; $btnStop.Height = 40
+$btnStop.Left = 152; $btnStop.Top = 578; $btnStop.Width = 120; $btnStop.Height = 40
 $btnStop.Text = 'Stop'
 $btnStop.Enabled = $false
 $btnStop.FlatStyle = 'Flat'; $btnStop.FlatAppearance.BorderSize = 0
@@ -267,7 +314,7 @@ $btnStop.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
 $btnStop.Parent = $form
 
 $btnHide = New-Object System.Windows.Forms.Button
-$btnHide.Left = 282; $btnHide.Top = 474; $btnHide.Width = 150; $btnHide.Height = 40
+$btnHide.Left = 282; $btnHide.Top = 578; $btnHide.Width = 150; $btnHide.Height = 40
 $btnHide.Text = 'Hide to tray'
 $btnHide.FlatStyle = 'Flat'; $btnHide.FlatAppearance.BorderSize = 0
 $btnHide.BackColor = $C_FIELD; $btnHide.ForeColor = $C_TEXT
@@ -275,8 +322,8 @@ $btnHide.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
 $btnHide.Parent = $form
 
 $lblFooter = New-Object System.Windows.Forms.Label
-$lblFooter.Left = 22; $lblFooter.Top = 522; $lblFooter.Width = 410; $lblFooter.Height = 30
-$lblFooter.Text = 'Closing the window keeps running in the tray.' + [Environment]::NewLine + 'Exit from the tray icon or press Stop.'
+$lblFooter.Left = 22; $lblFooter.Top = 626; $lblFooter.Width = 410; $lblFooter.Height = 30
+$lblFooter.Text = 'Closing the window keeps running in the tray. Exit from the tray icon or press Stop.'
 $lblFooter.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $lblFooter.ForeColor = $C_FAINT
 $lblFooter.Parent = $form
@@ -294,129 +341,151 @@ $trayMenu.Items.Add('-') | Out-Null
 $trayExit = $trayMenu.Items.Add('Exit')
 $tray.ContextMenuStrip = $trayMenu
 
-# ---------------- engine ----------------
+# ---------------- engine + timer ----------------
+$script:State = $null
+$script:Mutex = $null
+
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 1000
+$timer.Interval = 900
 
 $timer.Add_Tick({
-    if (-not $script:Running) { return }
+    if (-not $script:State) { return }
+    $out = Invoke-KATick $script:State
+    foreach ($ev in $out.Events) { Write-Log $ev }
 
-    $now = Get-Date
-    $remaining = ($script:PhaseEnd - $now).TotalSeconds
+    $remaining = ($script:State.PhaseEnd - (Get-Date)).TotalSeconds
+    $script:lblCountdown.Text = (Format-KASpan $remaining)
+    $script:lblTaps.Text = "$($script:State.PressCount)"
 
-    if ($script:Phase -eq 'ACTIVE') {
-        $interval = [double]$script:Cfg.Interval
-        if ($interval -lt 1) { $interval = 1 }
-        if (-not $script:LastPress -or ($now - $script:LastPress).TotalSeconds -ge $interval) {
-            $vk = Get-KeyCode $script:Cfg.Key
-            [Win32.K]::keybd_event($vk, 0, 0, 0)
-            [Win32.K]::keybd_event($vk, 0, 2, 0)
-            $script:LastPress = $now
-            $script:PressCount++
-            $tray.Text = "KeepAlive - ACTIVE ($($script:PressCount) taps)"
-        }
-        if ($remaining -le 0) {
-            if ($script:NeverRest) {
-                $script:PhaseEnd = $now.AddMinutes([double]::Max(1, [double]$script:Cfg.Active))
-            } else {
-                $script:Phase = 'REST'
-                $script:PhaseEnd = $now.AddMinutes([double]$script:Cfg.Rest)
-                $script:LastPress = $null
-                $script:lblPhase.Text = 'REST'
-                $script:lblPhase.ForeColor = $C_FAINT
-                Write-Log "REST started ($($script:Cfg.Rest) min - no input)"
-            }
-        }
-    }
-    elseif ($script:Phase -eq 'REST') {
-        if ($remaining -le 0) {
-            $script:Phase = 'ACTIVE'
-            $script:PhaseEnd = $now.AddMinutes([double]$script:Cfg.Active)
-            $script:lblPhase.Text = 'ACTIVE'
-            $script:lblPhase.ForeColor = $C_GREEN
-            Write-Log "ACTIVE started ($($script:Cfg.Active) min)"
-        }
-    }
+    $total = ($script:State.PhaseEnd - $script:State.PhaseStart).TotalSeconds
+    $pct = 0
+    if ($total -gt 0) { $pct = [int]((1 - ($remaining / $total)) * 100) }
+    if ($pct -lt 0) { $pct = 0 }; if ($pct -gt 100) { $pct = 100 }
+    try { $script:progress.Value = $pct } catch { }
 
-    if ($script:Running) {
-        $script:lblCountdown.Text = (Format-Span $remaining)
-        $script:lblTaps.Text = "$($script:PressCount)"
-        $total = ($script:PhaseEnd - $script:CfgPhaseStart).TotalSeconds
-        $pct = 0
-        if ($total -gt 0) { $pct = [int]((1 - ($remaining / $total)) * 100) }
-        if ($pct -lt 0) { $pct = 0 }; if ($pct -gt 100) { $pct = 100 }
-        try { $script:progress.Value = $pct } catch { }
-        $uptime = if ($script:StartedAt) { Format-Span ((Get-Date) - $script:StartedAt).TotalSeconds } else { '00:00' }
-        $script:lblSchedule.Text = "Key $($script:Cfg.Key) every $($script:Cfg.Interval)s  |  running $uptime"
+    $uptime = if ($script:State.StartedAt) { Format-KASpan ((Get-Date) - $script:State.StartedAt).TotalSeconds } else { '00:00' }
+    $script:lblSchedule.Text = "$($script:State.Cfg.InputMode) every $($script:State.Cfg.Interval)s  |  running $uptime"
+
+    # live "why not acting" line, straight from the suppression rules
+    $script:lblSuppress.Text = (Get-KASuppressionReason $script:State.Cfg)
+
+    # tray tooltip mirrors the phase
+    if ($script:State.Phase -eq 'ACTIVE') {
+        $script:lblPhase.Text = 'ACTIVE'
+        $script:lblPhase.ForeColor = $C_GREEN
+        $tray.Text = "KeepAlive - ACTIVE ($($script:State.PressCount) actions)"
+    } elseif ($script:State.Phase -eq 'REST') {
+        $script:lblPhase.Text = 'REST'
+        $script:lblPhase.ForeColor = $C_FAINT
+        $tray.Text = 'KeepAlive - REST'
     }
 })
 
 # ---------------- actions ----------------
-function Start-KeepAlive {
-    $interval = 0; $active = 0; $rest = 0
+function Read-KAInputs {
+    $interval = 0.0; $active = 0.0; $rest = 0.0; $idle = 0.0
     if (-not [double]::TryParse($txtInterval.Text, [ref]$interval) -or $interval -lt 1) {
-        [System.Windows.Forms.MessageBox]::Show('Seconds between presses must be 1 or more.', 'KeepAlive', 'OK', 'Warning') | Out-Null
-        return
+        Warn 'Seconds between actions must be 1 or more.'; return $null
     }
     if (-not [double]::TryParse($txtActive.Text, [ref]$active) -or $active -lt 0) {
-        [System.Windows.Forms.MessageBox]::Show('Active minutes must be 0 (never rest) or a positive number.', 'KeepAlive', 'OK', 'Warning') | Out-Null
-        return
+        Warn 'Active minutes must be 0 (never rest) or positive.'; return $null
     }
     if (-not [double]::TryParse($txtRest.Text, [ref]$rest) -or $rest -lt 0) {
-        [System.Windows.Forms.MessageBox]::Show('Rest minutes must be 0 or a positive number.', 'KeepAlive', 'OK', 'Warning') | Out-Null
-        return
+        Warn 'Rest minutes must be 0 or positive.'; return $null
     }
     if ($active -gt 0 -and $rest -le 0) {
-        [System.Windows.Forms.MessageBox]::Show('With an active timer set, rest minutes must be at least 0.5.' + [Environment]::NewLine + 'Use 0 active minutes for the never-rest mode.', 'KeepAlive', 'OK', 'Warning') | Out-Null
-        return
+        Warn 'With an active timer, rest minutes must be at least 0.5.' + [Environment]::NewLine + 'Use 0 active minutes for never-rest.'; return $null
+    }
+    if (-not [double]::TryParse($txtIdle.Text, [ref]$idle) -or $idle -lt 0) {
+        Warn 'Idle seconds must be 0 or positive.'; return $null
+    }
+    $mode = $cmbMode.SelectedItem.ToString()
+    if ($mode -eq 'none' -and -not $chkPower.Checked) {
+        Warn 'Action "none" without the power request does nothing.'; return $null
+    }
+    return @{
+        Interval = $interval; Active = $active; Rest = $rest; IdleThreshold = $idle
+        Key = $cmbKey.SelectedItem.ToString()
+        InputMode = $mode
+        Blacklist = @($txtBlacklist.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        PowerRequest = $chkPower.Checked
+        RespectFullscreen = $chkFullscreen.Checked
+    }
+}
+
+function Warn([string]$Message) {
+    [System.Windows.Forms.MessageBox]::Show($Message, 'KeepAlive', 'OK', 'Warning') | Out-Null
+}
+
+function Start-KeepAlive {
+    $cfg = Read-KAInputs
+    if (-not $cfg) { return }
+
+    $script:State = Initialize-KAEngine `
+        -Key $cfg.Key `
+        -Interval $cfg.Interval `
+        -ActiveMinutes $cfg.Active `
+        -RestMinutes $cfg.Rest `
+        -InputMode $cfg.InputMode `
+        -PowerRequest:$cfg.PowerRequest `
+        -IdleThreshold $cfg.IdleThreshold `
+        -BlackList $cfg.Blacklist `
+        -RespectFullscreen:$cfg.RespectFullscreen `
+        -DryRun:$chkDryRun.Checked
+
+    if (-not $chkDryRun.Checked) {
+        $script:Mutex = New-KAMutex
     }
 
-    $script:Cfg = @{ Interval = $interval; Active = $active; Rest = $rest; Key = $cmbKey.SelectedItem.ToString() }
-    $script:NeverRest = ($active -le 0)
-    $script:Running = $true
-    $script:Phase = 'ACTIVE'
-    $script:CfgPhaseStart = Get-Date
-    $script:PhaseEnd = (Get-Date).AddMinutes([double]::Max(0.016, $active))
-    $script:LastPress = $null
-    $script:PressCount = 0
-    $script:StartedAt = Get-Date
+    Start-KACycle $script:State
+    Write-Log "ACTIVE started - $($cfg.InputMode) every $($cfg.Interval)s, active $($cfg.Active) min$(if ($cfg.Active -le 0) { ' (never rest)' } else { ', rest ' + $cfg.Rest + ' min' })"
+    if ($cfg.PowerRequest) { Write-Log 'Power request claimed' }
+    if ($cfg.IdleThreshold -gt 0) { Write-Log "Only acts after $($cfg.IdleThreshold)s idle" }
+    if ($cfg.Blacklist.Count) { Write-Log "No-tap list: $($cfg.Blacklist -join ', ')" }
+    if ($chkDryRun.Checked) { Write-Log 'DRY RUN - nothing is pressed or claimed' }
 
-    $script:lblPhase.Text = 'ACTIVE'
-    $script:lblPhase.ForeColor = $C_GREEN
     $btnStart.Enabled = $false
     $btnStop.Enabled = $true
-    foreach ($c in @($cmbKey, $txtInterval, $txtActive, $txtRest)) { $c.Enabled = $false }
+    $btnTest.Enabled = $false
+    foreach ($c in @($cmbKey, $cmbMode, $txtInterval, $txtActive, $txtRest, $txtIdle, $txtBlacklist)) { $c.Enabled = $false }
+    Save-Settings
     $tray.Text = 'KeepAlive - ACTIVE'
-    Save-Settings -Key $script:Cfg.Key -Interval $interval -Active $active -Rest $rest
-    Write-Log "ACTIVE started - $($script:Cfg.Key) every $($interval)s, active $active min$(if ($script:NeverRest) { ' (never rest)' } else { ", rest $rest min" })"
     $timer.Start()
 }
 
 function Stop-KeepAlive {
-    $script:Running = $false
-    $script:Phase = 'STOPPED'
+    if ($script:State) { Stop-KACycle $script:State }
+    if ($script:Mutex) { $script:Mutex.Dispose(); $script:Mutex = $null }
     $timer.Stop()
+
     $script:lblPhase.Text = 'STOPPED'
     $script:lblPhase.ForeColor = $C_STOPPED
     $script:lblCountdown.Text = '--:--'
     $script:progress.Value = 0
+    $script:lblSuppress.Text = ''
     $script:lblSchedule.Text = 'Configure above, then press Start.'
+    if ($script:State) { Write-Log "Stopped - $($script:State.PressCount) actions total." }
+
     $btnStart.Enabled = $true
     $btnStop.Enabled = $false
-    foreach ($c in @($cmbKey, $txtInterval, $txtActive, $txtRest)) { $c.Enabled = $true }
+    $btnTest.Enabled = $true
+    foreach ($c in @($cmbKey, $cmbMode, $txtInterval, $txtActive, $txtRest, $txtIdle, $txtBlacklist)) { $c.Enabled = $true }
     $tray.Text = 'KeepAlive - stopped'
-    Write-Log "Stopped - $($script:PressCount) taps total."
+    $script:State = $null
 }
 
 $btnStart.Add_Click({ Start-KeepAlive })
 $btnStop.Add_Click({ Stop-KeepAlive })
-$trayToggle.Add_Click({ if ($script:Running) { Stop-KeepAlive } else { Start-KeepAlive } })
+$trayToggle.Add_Click({ if ($script:State) { Stop-KeepAlive } else { Start-KeepAlive } })
 
 $btnTest.Add_Click({
-    $vk = Get-KeyCode $cmbKey.SelectedItem.ToString()
-    [Win32.K]::keybd_event($vk, 0, 0, 0)
-    [Win32.K]::keybd_event($vk, 0, 2, 0)
-    Write-Log "Test press: $($cmbKey.SelectedItem)"
+    if ($cmbMode.SelectedItem.ToString() -eq 'mouse') {
+        Invoke-KAMouseNudge
+        Write-Log 'Test action: mouse nudge'
+    } else {
+        Invoke-KAKeyTap -Key $cmbKey.SelectedItem.ToString()
+        Write-Log "Test action: pressed $($cmbKey.SelectedItem)"
+    }
 })
 
 $btnHide.Add_Click({
@@ -440,16 +509,18 @@ $trayExit.Add_Click({
 
 $form.Add_FormClosing({
     param($sender, $e)
-    if ($script:Running) {
+    if ($script:State) {
         $e.Cancel = $true
         $form.WindowState = 'Minimized'
         $form.ShowInTaskbar = $false
         $tray.Visible = $true
         $tray.ShowBalloonTip(3000, 'KeepAlive', 'Still running in the tray. Right-click the icon to exit.', 'Info')
     } else {
+        if ($script:Mutex) { $script:Mutex.Dispose(); $script:Mutex = $null }
         $tray.Visible = $false
     }
 })
 
 [void]$form.ShowDialog()
+if ($script:Mutex) { $script:Mutex.Dispose(); $script:Mutex = $null }
 $timer.Stop()

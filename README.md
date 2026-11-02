@@ -35,10 +35,16 @@ Then it repeats: ACTIVE -> REST -> ACTIVE ... until you stop it.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `-Interval <sec>` | `60` | Seconds between key presses |
+| `-Interval <sec>` | `60` | Seconds between input actions |
 | `-Key <key>` | `Shift` | `Shift`, `Ctrl`, `Alt`, `ScrollLock` (unknown values fall back to Shift) |
-| `-ActiveMinutes <min>` | `60` | Length of the ACTIVE phase. `0` = never rest (the original behaviour) |
-| `-RestMinutes <min>` | `2` | Length of the REST phase (no input) |
+| `-ActiveMinutes <min>` | `60` | ACTIVE phase length. `0` = never rest |
+| `-RestMinutes <min>` | `2` | REST phase length (no input) |
+| `-InputMode <mode>` | `key` | `key` / `mouse` / `power` / `none` |
+| `-PowerRequest` | off | Hold a Windows power request while ACTIVE (survives where synthetic keys are ignored) |
+| `-IdleThreshold <sec>` | `0` | Only act after this much real idle (uses `GetLastInputInfo`) |
+| `-BlackList <names>` | none | Processes that pause input: `-BlackList zoom,teams` |
+| `-RespectFullscreen` | off | Pause input while a fullscreen app has focus |
+| `-DryRun` | off | Log the plan, touch nothing |
 
 ```bat
 KeepAlive.bat                                            # GUI
@@ -54,8 +60,11 @@ The CLI prints each phase transition with a live countdown. Stop it with **Ctrl+
 | File | Purpose |
 |---|---|
 | `KeepAlive.bat` | Launcher. No arguments -> GUI; any argument -> CLI |
-| `KeepAliveUI.ps1` | WinForms GUI (engine, tray, status, settings persistence) |
-| `KeepAlive.ps1` | CLI version, same cycle engine |
+| `KeepAliveUI.ps1` | WinForms GUI (settings, live status, tray, diagnostics, persistence) |
+| `KeepAlive.ps1` | CLI with `--help`, validation, exit codes |
+| `KeepAliveEngine.ps1` | Shared engine: cycle state machine, power requests, idle detection, app awareness, single-instance, dry-run |
+| `test-engine.ps1` | Dry-run test harness for the engine (no side effects) |
+| `gui-smoke.ps1` | Smoke test driving the GUI flow's engine path |
 
 Settings from the GUI are saved to `KeepAlive.settings.json` next to the script (gitignored - your machine, your schedule).
 
@@ -66,6 +75,8 @@ Settings from the GUI are saved to `KeepAlive.settings.json` next to the script 
 
 ## Notes
 
+- **It knows when to stay out of the way.** With an idle threshold set, it only taps after you have actually been idle; the no-tap list and fullscreen detection pause input for chosen apps (presentations, meetings). `-DryRun` prints the intended schedule without touching anything.
+- **Only one instance runs** (named mutex). A second launch focuses the existing window or reports exit code 2.
 - **Shift is the safe default.** A lone Shift tap is ignored by every app. Ctrl is mostly safe too; Alt can focus a menu bar, and ScrollLock visibly toggles its keyboard light.
 - **It does not bypass policy.** Group policy or a corporate idle policy can still lock the session regardless of activity.
 - Kill it cleanly: Stop button / Ctrl+C in the CLI, or Exit from the tray icon. The key is always released immediately after each press, so killing it mid-cycle never leaves a stuck modifier key.

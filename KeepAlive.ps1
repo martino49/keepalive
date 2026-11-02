@@ -1,83 +1,128 @@
-# KeepAlive.ps1 - Keeps the PC awake in human-like cycles:
-#   ACTIVE for $ActiveMinutes  -> presses Shift every $Interval sec
-#   REST   for $RestMinutes    -> zero input (no keyboard, no mouse, nothing)
-# then repeats until you stop it (Ctrl+C).
+# KeepAlive.ps1 - CLI keep-awake tool with ACTIVE/REST cycles.
+# Engine lives in KeepAliveEngine.ps1 (shared with the GUI).
 #
-# Usage:
-#   KeepAlive.bat                                  # defaults: 60s taps, 60min active / 2min rest
-#   KeepAlive.bat -ActiveMinutes 30 -RestMinutes 5 # custom schedule
-#   KeepAlive.bat -Key Ctrl -Interval 30           # different key / faster taps
-#   KeepAlive.bat -ActiveMinutes 0                 # old behaviour: never rest
+#   ACTIVE  : presses a key / nudges the mouse / holds a Windows power request
+#   REST    : zero input (no keyboard, no mouse, nothing)
+#
+# Usage: KeepAlive.bat -Interval 30 -Key Ctrl -ActiveMinutes 45 -RestMinutes 2
+#        KeepAlive.bat -InputMode mouse -PowerRequest
+#        KeepAlive.bat -IdleThreshold 120 -BlackList zoom,teams
+#        KeepAlive.bat -DryRun        # plan only, press nothing
 
 param(
     [double]$Interval = 60,
-    [string]$Key = "Shift",
+    [string]$Key = 'Shift',
     [double]$ActiveMinutes = 60,
-    [double]$RestMinutes = 2
+    [double]$RestMinutes = 2,
+    [ValidateSet('key', 'mouse', 'power', 'none')]
+    [string]$InputMode = 'key',
+    [switch]$PowerRequest,
+    [double]$IdleThreshold = 0,
+    [string[]]$BlackList = @(),
+    [switch]$RespectFullscreen,
+    [switch]$DryRun,
+    [switch]$Help
 )
 
-Add-Type -MemberDefinition @'
-[DllImport("user32.dll")]
-public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
-'@ -Name "K" -Namespace "Win32"
+$ErrorActionPreference = 'Stop'
 
-$vk = switch ($Key) {
-    "Shift"  { 0x10 }
-    "Ctrl"   { 0x11 }
-    "Alt"    { 0x12 }
-    "Scroll" { 0x91 }
-    default  { 0x10 }
+if ($Help) {
+    Write-Host @'
+KeepAlive - keep your PC awake without babysitting it.
+
+  -Interval <sec>        Seconds between input actions (default 60)
+  -Key <key>             Shift | Ctrl | Alt | ScrollLock (default Shift)
+  -ActiveMinutes <min>   ACTIVE phase length; 0 = never rest (default 60)
+  -RestMinutes <min>     REST phase length, no input at all (default 2)
+  -InputMode <mode>      key | mouse | power | none (default key)
+  -PowerRequest          Hold a Windows power request while active
+  -IdleThreshold <sec>   Only act after this much real idle (0 = off)
+  -BlackList <names>     Processes that pause input: -BlackList zoom,teams
+  -RespectFullscreen      Pause input while a fullscreen app has focus
+  -DryRun                Log intended actions, touch nothing
+  -Help                  This text
+
+Exit codes: 0 clean stop, 2 already running, 1 error.
+'@
+    exit 0
 }
 
-function Format-Span([double]$Seconds) {
-    if ($Seconds -lt 0) { $Seconds = 0 }
-    $ts = [TimeSpan]::FromSeconds($Seconds)
-    if ($ts.TotalHours -ge 1) { return "{0:hh\:mm\:ss}" -f $ts }
-    return "{0:mm\:ss}" -f $ts
+. (Join-Path $PSScriptRoot 'KeepAliveEngine.ps1')
+
+# ---- validate ----
+function Fail([string]$Message) {
+    [Console]::Error.WriteLine("KeepAlive: $Message")
+    exit 1
 }
-
-$schedule = "ACTIVE ${ActiveMinutes}min (${Key} every ${Interval}s) -> REST ${RestMinutes}min"
-Write-Host "KeepAlive: $schedule. Ctrl+C to stop." -ForegroundColor Cyan
-
-# ActiveMinutes <= 0 means "never rest" (the old behaviour). It must still
-# sleep between presses or it degenerates into a hot spin.
-if ($ActiveMinutes -le 0) {
-    while ($true) {
-        [Win32.K]::keybd_event($vk, 0, 0, 0)
-        [Win32.K]::keybd_event($vk, 0, 2, 0)
-        Write-Host "[$(Get-Date -Format HH:mm:ss)] ACTIVE $Key (no rest scheduled) - Ctrl+C to stop" -ForegroundColor Green
-        Start-Sleep -Seconds ([Math]::Max(1, [Math]::Min($Interval, 86400)))
+if ($Interval -lt 1) { Fail '-Interval must be 1 or more.' }
+if ($ActiveMinutes -lt 0) { Fail '-ActiveMinutes must be 0 or positive.' }
+if ($RestMinutes -lt 0) { Fail '-RestMinutes must be 0 or positive.' }
+if ($ActiveMinutes -gt 0 -and $RestMinutes -le 0) {
+    Fail 'With a positive active window, -RestMinutes must be at least 0.5 (use -ActiveMinutes 0 for never-rest).'
+}
+if ($InputMode -eq 'none' -and -not $PowerRequest) {
+    Fail 'InputMode none without -PowerRequest would do nothing.'
+}
+if (-not $DryRun -and (Test-KAAlreadyRunning)) {
+    $blocked = Show-KAExistingWindow
+    if ($blocked) {
+        Write-Host 'KeepAlive: already running - focused the existing window.'
+    } else {
+        Write-Host 'KeepAlive: already running (no window found). Stop it first or use the tray icon.'
     }
+    exit 2
 }
 
-while ($true) {
+# ---- build the engine ----
+$state = Initialize-KAEngine `
+    -Key $Key `
+    -Interval $Interval `
+    -ActiveMinutes $ActiveMinutes `
+    -RestMinutes $RestMinutes `
+    -InputMode $InputMode `
+    -PowerRequest:$PowerRequest `
+    -IdleThreshold $IdleThreshold `
+    -BlackList $BlackList `
+    -RespectFullscreen:$RespectFullscreen `
+    -DryRun:$DryRun
 
-    # ---------- ACTIVE phase: keep the machine awake ----------
-    $activeUntil = (Get-Date).AddMinutes($ActiveMinutes)
-    while ($true) {
-        # One full tap: press (flags 0) then release (flags 2 = KEYEVENTF_KEYUP).
-        [Win32.K]::keybd_event($vk, 0, 0, 0)
-        [Win32.K]::keybd_event($vk, 0, 2, 0)
+# ---- report the plan ----
+$plan = "ACTIVE $ActiveMinutes min -> REST $RestMinutes min"
+if ($ActiveMinutes -le 0) { $plan = 'ACTIVE forever (never rest) -> no REST' }
+$mechanism = switch ($InputMode) {
+    'key'   { "press $Key every ${Interval}s" }
+    'mouse' { "nudge mouse every ${Interval}s" }
+    'power' { 'power request only (no input)' }
+    'none'  { 'nothing' }
+}
+Write-Host "KeepAlive: $plan | $mechanism"
+if ($PowerRequest) { Write-Host 'KeepAlive: Windows power request held while ACTIVE' }
+if ($IdleThreshold -gt 0) { Write-Host "KeepAlive: only acts after ${IdleThreshold}s of real idle" }
+if ($BlackList.Count) { Write-Host "KeepAlive: no-tap list = $($BlackList -join ', ')" }
+if ($RespectFullscreen) { Write-Host 'KeepAlive: fullscreen apps pause input' }
+if ($DryRun) { Write-Host 'KeepAlive: DRY RUN - nothing will be pressed or claimed' }
+Write-Host 'KeepAlive: Ctrl+C to stop.'
 
-        $remaining = ($activeUntil - (Get-Date)).TotalSeconds
-        if ($remaining -le 0) {
-            Write-Host "[$(Get-Date -Format HH:mm:ss)] ACTIVE done -> REST $(Format-Span $($RestMinutes * 60))" -ForegroundColor Cyan
-            break
+# ---- hold the mutex for our lifetime (not in dry-run) ----
+if (-not $DryRun) { $null = New-KAMutex }
+
+try {
+    Start-KACycle $state
+    $taps = 0
+    while ($state.Phase -ne 'STOPPED') {
+        Start-Sleep -Milliseconds 900
+        $out = Invoke-KATick $state
+        foreach ($ev in $out.Events) {
+            $color = 'Gray'
+            if ($ev -like 'ACTIVE*') { $color = 'Green' }
+            if ($ev -like 'REST*') { $color = 'DarkGray' }
+            if ($ev -like '*error*') { $color = 'Red' }
+            Write-Host "[$(Get-Date -Format HH:mm:ss)] $ev" -ForegroundColor $color
         }
-        Write-Host "[$(Get-Date -Format HH:mm:ss)] ACTIVE $Key - rest in $(Format-Span $remaining)" -ForegroundColor Green
-        Start-Sleep -Seconds ([Math]::Min($Interval, $remaining))
+        if ($state.PressCount -ne $taps) { $taps = $state.PressCount }
     }
-
-    # ---------- REST phase: absolutely no input ----------
-    if ($RestMinutes -le 0) { continue }
-    $restUntil = (Get-Date).AddMinutes($RestMinutes)
-    while ($true) {
-        $remaining = ($restUntil - (Get-Date)).TotalSeconds
-        if ($remaining -le 0) {
-            Write-Host "[$(Get-Date -Format HH:mm:ss)] REST done -> ACTIVE ${ActiveMinutes}min" -ForegroundColor Cyan
-            break
-        }
-        Write-Host "[$(Get-Date -Format HH:mm:ss)] REST (no input) - active in $(Format-Span $remaining)" -ForegroundColor DarkGray
-        Start-Sleep -Seconds ([Math]::Min($Interval, $remaining))
-    }
+} finally {
+    Stop-KACycle $state
+    if ($script:KAMutex) { $script:KAMutex.Dispose(); $script:KAMutex = $null }
+    Write-Host "KeepAlive: stopped - $($state.PressCount) input actions total."
 }
