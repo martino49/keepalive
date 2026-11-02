@@ -93,6 +93,7 @@ function Save-Settings {
             Blacklist         = @($txtBlacklist.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
             PowerRequest      = $chkPower.Checked
             RespectFullscreen = $chkFullscreen.Checked
+            AutoStart         = $chkAutoStart.Checked
             From              = $txtFrom.Text.Trim()
             Until             = $txtUntil.Text.Trim()
             Days              = @($txtDays.Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -253,6 +254,13 @@ $chkFullscreen.Parent = $grpSettings
 
 $chkDryRun = New-Object System.Windows.Forms.CheckBox
 $chkDryRun.Left = 118; $chkDryRun.Top = 284; $chkDryRun.Width = 150
+
+$chkAutoStart = New-Object System.Windows.Forms.CheckBox
+$chkAutoStart.Left = 278; $chkAutoStart.Top = 284; $chkAutoStart.Width = 130
+$chkAutoStart.Text = 'Start with Windows'
+$chkAutoStart.ForeColor = $C_MUTED
+$chkAutoStart.Checked = (Test-KAAutoStartEnabled)
+$chkAutoStart.Parent = $grpSettings
 $chkDryRun.Text = 'Dry run (log only)'
 $chkDryRun.ForeColor = $C_AMBER
 $chkDryRun.Parent = $grpSettings
@@ -320,6 +328,27 @@ $script:lblSchedule.Text = 'Configure above, then press Start.'
 $script:lblSchedule.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $script:lblSchedule.ForeColor = $C_FAINT
 $script:lblSchedule.Parent = $grpStatus
+
+# dynamic tray icons, drawn at runtime (green ACTIVE / grey REST / red stopped)
+function New-KADotIcon {
+    param($Color)
+    $bmp = New-Object System.Drawing.Bitmap(16, 16)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.Clear([System.Drawing.Color]::Transparent)
+    $brush = New-Object System.Drawing.SolidBrush($Color)
+    $g.FillEllipse($brush, 1, 1, 14, 14)
+    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(24, 24, 27))
+    $g.DrawEllipse($pen, 1, 1, 14, 14)
+    $g.Dispose()
+    $handle = $bmp.GetHicon()
+    $icon = [System.Drawing.Icon]::FromHandle($handle)
+    $bmp.Dispose()
+    return $icon
+}
+$script:IconActive = New-KADotIcon $C_GREEN
+$script:IconRest = New-KADotIcon $C_FAINT
+$script:IconStopped = New-KADotIcon $C_ACCENT
+# tray icon is applied once the NotifyIcon exists (phase handlers below)
 
 $script:lblSuppress = New-Object System.Windows.Forms.Label
 $script:lblSuppress.Left = 18; $script:lblSuppress.Top = 120; $script:lblSuppress.Width = 374; $script:lblSuppress.Height = 18
@@ -412,18 +441,29 @@ $timer.Add_Tick({
     # live "why not acting" line, straight from the suppression rules
     $script:lblSuppress.Text = (Get-KASuppressionReason $script:State.Cfg)
 
+    # diagnostics strip: what the engine is actually seeing
+    $src = Get-KAPowerSource
+    $idle = [int](Get-KAIdleSeconds)
+    $fg = Get-KAForegroundProcess
+    $fgText = if ($fg) { $fg } else { 'unknown' }
+    $phaseClock = if ($script:State.PhaseEnd -gt (Get-Date)) { $script:State.PhaseEnd.ToString('HH:mm') } else { '--:--' }
+    $script:lblSchedule.Text = "$($script:State.Cfg.InputMode) every $($script:State.Cfg.Interval)s  |  idle ${idle}s  |  app $fgText  |  power $src  |  phase ends $phaseClock"
+
     # tray tooltip mirrors the phase
     if ($script:State.Phase -eq 'ACTIVE') {
         $script:lblPhase.Text = 'ACTIVE'
         $script:lblPhase.ForeColor = $C_GREEN
+        $tray.Icon = $script:IconActive
         $tray.Text = "KeepAlive - ACTIVE ($($script:State.PressCount) actions)"
     } elseif ($script:State.Phase -eq 'REST') {
         $script:lblPhase.Text = 'REST'
         $script:lblPhase.ForeColor = $C_FAINT
+        $tray.Icon = $script:IconRest
         $tray.Text = 'KeepAlive - REST'
     } elseif ($script:State.Phase -eq 'SCHEDULED') {
         $script:lblPhase.Text = 'WAITING'
         $script:lblPhase.ForeColor = $C_AMBER
+        $tray.Icon = $script:IconRest
         $tray.Text = 'KeepAlive - waiting for schedule window'
     }
 })
@@ -529,6 +569,15 @@ function Start-KeepAlive {
     $btnStart.Enabled = $false
     $btnStop.Enabled = $true
     $btnTest.Enabled = $false
+
+    # reflect the auto-start choice immediately (Windows startup shortcut)
+    $wantAuto = $chkAutoStart.Checked
+    $haveAuto = Test-KAAutoStartEnabled
+    if ($wantAuto -and -not $haveAuto) {
+        if (Enable-KAAutoStart) { Write-Log 'Added to Windows startup' } else { Warn 'Could not create the startup shortcut.' }
+    } elseif (-not $wantAuto -and $haveAuto) {
+        if (Disable-KAAutoStart) { Write-Log 'Removed from Windows startup' }
+    }
     foreach ($c in @($cmbKey, $cmbMode, $txtInterval, $txtActive, $txtRest, $txtIdle, $txtBlacklist, $txtFrom, $txtUntil, $txtDays, $txtRunFor, $txtRunUntil, $cmbBattery)) { $c.Enabled = $false }
     Save-Settings
     $tray.Text = 'KeepAlive - ACTIVE'
@@ -553,8 +602,27 @@ function Stop-KeepAlive {
     $btnTest.Enabled = $true
     foreach ($c in @($cmbKey, $cmbMode, $txtInterval, $txtActive, $txtRest, $txtIdle, $txtBlacklist, $txtFrom, $txtUntil, $txtDays, $txtRunFor, $txtRunUntil, $cmbBattery)) { $c.Enabled = $true }
     $tray.Text = 'KeepAlive - stopped'
+    $tray.Icon = $script:IconStopped
     $script:State = $null
 }
+
+# ---- first-run onboarding: shown once, AFTER the main window (a modal box
+# here would block ShowDialog and the user would never see the app at all) ----
+$script:OnboardMarker = Join-Path $PSScriptRoot '.onboarded'
+$form.Add_Shown({
+    if (Test-Path $script:OnboardMarker) { return }
+    # unattended starts (Windows startup) must never block on a modal
+    if ($env:KEEPALIVE_NO_ONBOARDING) { return }
+    try {
+        $intro = 'ACTIVE presses a key (or nudges the mouse) on a timer so your PC never sleeps. REST is a genuine idle window: no keyboard, no mouse, nothing.' +
+            [Environment]::NewLine + [Environment]::NewLine +
+            'You choose the key, the cadence and the ACTIVE/REST lengths, or set a schedule window. A lone Shift press does not register as input in any app, so nothing you are working on is disturbed. Closing this window keeps it running in the tray.'
+        [void][System.Windows.Forms.MessageBox]::Show($intro, 'Welcome to KeepAlive', 'OK', 'Information')
+        Set-Content -Path $script:OnboardMarker -Value 'onboarded' -Encoding ASCII
+    } catch {
+        # onboarding must never break the window
+    }
+})
 
 $btnStart.Add_Click({ Start-KeepAlive })
 $btnStop.Add_Click({ Stop-KeepAlive })

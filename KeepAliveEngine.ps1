@@ -299,6 +299,7 @@ function Get-KASuppressionReason {
 # Registered by the frontends (CLI/GUI). While suspended, the engine still
 # ticks but never acts - the session is locked so input is meaningless.
 $script:KASessionSuspended = $false
+$script:KARoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 
 function Suspend-KASession {
     $script:KASessionSuspended = $true
@@ -526,6 +527,78 @@ function Invoke-KATick {
     }
 
     return @{ Events = $events }
+}
+
+# ---------------- session log ----------------
+$script:KALogPath = Join-Path $(if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }) 'KeepAlive.log'
+
+function Write-KASessionLog {
+    param([string]$Message)
+    try {
+        $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
+        Add-Content -Path $script:KALogPath -Value $line -Encoding ASCII
+    } catch {
+        # logging must never break the tool
+    }
+}
+
+function Get-KASessionLogTail {
+    param([int]$Lines = 20)
+    try {
+        if (Test-Path $script:KALogPath) {
+            return (Get-Content $script:KALogPath -Tail $Lines)
+        }
+    } catch { }
+    return @()
+}
+
+# ---------------- auto-start with Windows ----------------
+function Get-KAStartupShortcutPath {
+    return (Join-Path ([Environment]::GetFolderPath('Startup')) 'KeepAlive.lnk')
+}
+
+function Test-KAAutoStartEnabled {
+    return (Test-Path (Get-KAStartupShortcutPath))
+}
+
+function Enable-KAAutoStart {
+    param([switch]$Minimized)
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $lnk = $shell.CreateShortcut((Get-KAStartupShortcutPath))
+        $lnk.TargetPath = "$env:WINDIR\System32\cmd.exe"
+        # /c start with the empty title keeps a console flashless batch launch
+        $lnk.Arguments = '/c ""' + '"' + (Join-Path $script:KARoot 'KeepAlive.bat') + '""'
+        $lnk.WorkingDirectory = $script:KARoot
+        $lnk.Description = 'KeepAlive - keep this PC awake'
+        $lnk.Save()
+        [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Disable-KAAutoStart {
+    try {
+        Remove-Item (Get-KAStartupShortcutPath) -Force -ErrorAction SilentlyContinue
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# ---------------- shared settings ----------------
+# CLI and GUI share one config file so a schedule set in the GUI is the
+# default for the CLI too (explicit flags always win).
+function Read-KASettingsFile {
+    param([string]$Path = (Join-Path $(if ($PSScriptRoot) { $PSScriptRoot } else { '.' }) 'KeepAlive.settings.json'))
+    try {
+        if (Test-Path $Path) {
+            return (Get-Content $Path -Raw | ConvertFrom-Json)
+        }
+    } catch { }
+    return $null
 }
 
 # ---------------- single instance ----------------

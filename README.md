@@ -51,6 +51,8 @@ Then it repeats: ACTIVE -> REST -> ACTIVE ... until you stop it.
 | `-RunFor <dur>` | none | Stop after: `1h30m`, `90m`, `45s` |
 | `-RunUntil HH:mm` | none | Stop at this clock time |
 | `-BatteryMode <mode>` | `ignore` | `ignore` / `require-ac` / `pause-on-battery` |
+| `-AutoStart` | off | Add KeepAlive to Windows startup (runs at logon) |
+| `-NoAutoStart` | off | Remove it from Windows startup |
 
 ```bat
 KeepAlive.bat                                            # GUI
@@ -62,6 +64,7 @@ KeepAlive.bat -From 08:00 -Until 18:00 -Days mon,tue,wed,thu,fri   # work hours 
 KeepAlive.bat -From 22:00 -Until 06:00 -BatteryMode pause-on-battery  # overnight, battery friendly
 KeepAlive.bat -RunFor 2h                                 # stop after two hours
 KeepAlive.bat -RunUntil 17:00                            # stop at 17:00
+KeepAlive.bat -AutoStart                                # run at every logon
 ```
 
 The CLI prints each phase transition with a live countdown. Stop it with **Ctrl+C**.
@@ -76,6 +79,8 @@ The CLI prints each phase transition with a live countdown. Stop it with **Ctrl+
 | `KeepAliveEngine.ps1` | Shared engine: cycle state machine, power requests, idle detection, app awareness, single-instance, dry-run |
 | `test-engine.ps1` | Dry-run test harness for the engine (no side effects) |
 | `gui-smoke.ps1` | Smoke test driving the GUI flow's engine path |
+| `KeepAlive.log` | Session history (phase switches), written by both frontends |
+| `KeepAlive.settings.json` | GUI settings - also the CLI defaults (gitignored) |
 
 Settings from the GUI are saved to `KeepAlive.settings.json` next to the script (gitignored - your machine, your schedule).
 
@@ -89,6 +94,7 @@ Settings from the GUI are saved to `KeepAlive.settings.json` next to the script 
 - **It knows when to stay out of the way.** With an idle threshold set, it only taps after you have actually been idle; the no-tap list and fullscreen detection pause input for chosen apps (presentations, meetings). `-DryRun` prints the intended schedule without touching anything.
 - **Only one instance runs** (named mutex). A second launch focuses the existing window or reports exit code 2.
 - **It runs on your schedule.** Time-of-day windows (with overnight support and weekday filters), a run-for duration, or a run-until clock time end the session on their own. Outside the window it waits with no input and no power claim.
+- **One config, two frontends.** The CLI reads the GUI's settings file as defaults, so a schedule set once applies to both. Every session is appended to `KeepAlive.log` for later auditing, and `-AutoStart` (or the GUI checkbox) drops a startup shortcut so it survives reboots.
 - **Laptop friendly.** The battery modes pause input (or refuse to claim a power request) when unplugged, and locking the session pauses everything until you unlock.
 - **Shift is the safe default.** A lone Shift tap is ignored by every app. Ctrl is mostly safe too; Alt can focus a menu bar, and ScrollLock visibly toggles its keyboard light.
 - **It does not bypass policy.** Group policy or a corporate idle policy can still lock the session regardless of activity.

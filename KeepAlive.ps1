@@ -28,10 +28,36 @@ param(
     [string]$RunUntil = '',
     [ValidateSet('ignore', 'require-ac', 'pause-on-battery')]
     [string]$BatteryMode = 'ignore',
+    [switch]$AutoStart,
+    [switch]$NoAutoStart,
     [switch]$Help
 )
 
 $ErrorActionPreference = 'Stop'
+
+# ---- engine must load before any helper below is called ----
+. (Join-Path $PSScriptRoot 'KeepAliveEngine.ps1')
+
+# ---- settings file defaults (explicit flags always win) ----
+$file = Read-KASettingsFile
+if ($file) {
+    if (-not $PSBoundParameters.ContainsKey('Key'))          { $Key = "$($file.Key)" }
+    if (-not $PSBoundParameters.ContainsKey('InputMode'))    { $InputMode = "$($file.InputMode)" }
+    if (-not $PSBoundParameters.ContainsKey('Interval'))     { $Interval = [double]$file.Interval }
+    if (-not $PSBoundParameters.ContainsKey('ActiveMinutes')){ $ActiveMinutes = [double]$file.Active }
+    if (-not $PSBoundParameters.ContainsKey('RestMinutes'))  { $RestMinutes = [double]$file.Rest }
+    if (-not $PSBoundParameters.ContainsKey('IdleThreshold')){ $IdleThreshold = [double]$file.IdleThreshold }
+    if (-not $PSBoundParameters.ContainsKey('BlackList'))    { $BlackList = @($file.Blacklist) }
+    if (-not $PSBoundParameters.ContainsKey('From'))         { $From = "$($file.From)" }
+    if (-not $PSBoundParameters.ContainsKey('Until'))        { $Until = "$($file.Until)" }
+    if (-not $PSBoundParameters.ContainsKey('Days'))         { $Days = @($file.Days) }
+    if (-not $PSBoundParameters.ContainsKey('RunFor'))       { $RunFor = "$($file.RunFor)" }
+    if (-not $PSBoundParameters.ContainsKey('RunUntil'))     { $RunUntil = "$($file.RunUntil)" }
+    if (-not $PSBoundParameters.ContainsKey('BatteryMode'))  { $BatteryMode = "$($file.BatteryMode)" }
+    if (-not $PSBoundParameters.ContainsKey('PowerRequest')) { if ($file.PowerRequest) { $PowerRequest = $true } }
+    if (-not $PSBoundParameters.ContainsKey('RespectFullscreen')) { if ($file.RespectFullscreen) { $RespectFullscreen = $true } }
+    if (-not $DryRun) { if ($file.DryRun) { $DryRun = $true } }
+}
 
 if ($Help) {
     Write-Host @'
@@ -55,7 +81,13 @@ KeepAlive - keep your PC awake without babysitting it.
   -RunUntil HH:mm        Stop at this clock time
   -BatteryMode <mode>    ignore | require-ac | pause-on-battery
                          (input pauses/ stops on battery; laptop friendly)
+  -AutoStart             Add KeepAlive to Windows startup (runs at logon)
+  -NoAutoStart           Remove it from Windows startup
   -Help                  This text
+
+Anything not given on the command line comes from KeepAlive.settings.json
+(the file the GUI writes), so a schedule set in the GUI applies here too.
+Session activity is appended to KeepAlive.log.
 
 The session lock pauses everything automatically while your screen is locked.
 
@@ -64,7 +96,6 @@ Exit codes: 0 clean stop, 2 already running, 1 error.
     exit 0
 }
 
-. (Join-Path $PSScriptRoot 'KeepAliveEngine.ps1')
 
 # ---- validate ----
 function Fail([string]$Message) {
@@ -88,6 +119,17 @@ if (-not $DryRun -and (Test-KAAlreadyRunning)) {
         Write-Host 'KeepAlive: already running (no window found). Stop it first or use the tray icon.'
     }
     exit 2
+}
+
+# ---- auto-start toggle ----
+if ($NoAutoStart) {
+    if (Disable-KAAutoStart) { Write-Host 'KeepAlive: removed from Windows startup.' } else { Write-Host 'KeepAlive: nothing to remove.' }
+    exit 0
+}
+if ($AutoStart) {
+    if (Enable-KAAutoStart) { Write-Host "KeepAlive: added to Windows startup - runs at logon: $(Get-KAStartupShortcutPath)" }
+    else { Fail 'Could not create the startup shortcut.' }
+    exit 0
 }
 
 # ---- build the engine ----
@@ -151,8 +193,13 @@ if (-not $DryRun) { $null = Register-KASessionEvents }
 # ---- hold the mutex for our lifetime (not in dry-run) ----
 if (-not $DryRun) { $null = New-KAMutex }
 
+if (-not $DryRun) {
+    Write-KASessionLog "start (pid $PID): $mechanism, $plan$(if ($From -and $Until) { ", window $From-$Until$daysText" })$(if ($state.StopAt) { ", ends $($state.StopAt.ToString('HH:mm'))" })"
+}
+
 try {
     Start-KACycle $state
+    Write-KASessionLog 'ACTIVE started'
     while ($state.Phase -ne 'STOPPED') {
         Start-Sleep -Milliseconds 900
         $out = Invoke-KATick $state
@@ -163,11 +210,17 @@ try {
             if ($ev -like '*paused*' -or $ev -like '*battery*') { $color = 'DarkYellow' }
             if ($ev -like '*error*') { $color = 'Red' }
             Write-Host "[$(Get-Date -Format HH:mm:ss)] $ev" -ForegroundColor $color
+            if (-not $DryRun) {
+                if ($ev -like 'ACTIVE*' -or $ev -like 'REST*' -or $ev -like 'Run window*' -or $ev -like 'input paused*') {
+                    Write-KASessionLog $ev
+                }
+            }
         }
         if ($out.Ended) { break }
     }
 } finally {
     Stop-KACycle $state
     if ($script:KAMutex) { $script:KAMutex.Dispose(); $script:KAMutex = $null }
+    if (-not $DryRun) { Write-KASessionLog "stopped - $($state.PressCount) actions total" }
     Write-Host "KeepAlive: stopped - $($state.PressCount) input actions total."
 }
