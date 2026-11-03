@@ -123,6 +123,7 @@ $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
 $form.AutoScaleMode = 'Dpi'
+$form.AutoScroll = $true
 $form.BackColor = $C_BG
 $form.ForeColor = $C_TEXT
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
@@ -674,3 +675,30 @@ $form.Add_FormClosing({
 [void]$form.ShowDialog()
 if ($script:Mutex) { $script:Mutex.Dispose(); $script:Mutex = $null }
 $timer.Stop()
+
+# ---- side scroll indicator ----
+# WinForms shows a scrollbar only when AutoScroll actually overflows; a thin
+# edge bar makes it visible at a glance even before the user reaches for the
+# scrollbar, and doubles as a scroll-position readout.
+$script:ScrollBar = New-Object System.Windows.Forms.ProgressBar
+$script:ScrollBar.Left = 444
+$script:ScrollBar.Top = 8
+$script:ScrollBar.Width = 6
+$script:ScrollBar.Height = 780
+$script:ScrollBar.Style = 'Continuous'
+$script:ScrollBar.Visible = $false
+$script:ScrollBar.Parent = $form
+
+$scrollTimer = New-Object System.Windows.Forms.Timer
+$scrollTimer.Interval = 250
+$scrollTimer.Add_Tick({
+    $scrollable = $form.VerticalScroll.Visible
+    if ($scrollable -ne $script:ScrollBar.Visible) { $script:ScrollBar.Visible = $scrollable }
+    if (-not $scrollable) { return }
+    $max = $form.VerticalScroll.Maximum
+    if ($max -le 0) { return }
+    $pct = [int](($form.VerticalScroll.Value / [double]$max) * 100)
+    if ($pct -lt 0) { $pct = 0 }; if ($pct -gt 100) { $pct = 100 }
+    try { $script:ScrollBar.Value = $pct } catch { }
+})
+$scrollTimer.Start()

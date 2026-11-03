@@ -603,16 +603,23 @@ function Read-KASettingsFile {
 
 # ---------------- single instance ----------------
 function New-KAMutex {
-    param([string]$Name = 'Global\KeepAlive.SingleInstance')
-    $isNew = $false
-    $script:KAMutex = New-Object System.Threading.Mutex($true, $Name, [ref]$isNew)
-    return $script:KAMutex
+    param([string]$Name = 'Local\KeepAlive.SingleInstance')
+    try {
+        $isNew = $false
+        $script:KAMutex = New-Object System.Threading.Mutex($true, $Name, [ref]$isNew)
+        return $script:KAMutex
+    } catch {
+        # Session-scoped named objects can still fail (elevated siblings,
+        # odd ACL setups). The guard is a nicety - never let it stop the user.
+        $script:KAMutex = $null
+        return $null
+    }
 }
 
 function Test-KAAlreadyRunning {
     try {
         $createdNew = $false
-        $m = New-Object System.Threading.Mutex($true, 'Global\KeepAlive.SingleInstance', [ref]$createdNew)
+        $m = New-Object System.Threading.Mutex($true, 'Local\KeepAlive.SingleInstance', [ref]$createdNew)
         $m.Dispose()
         return (-not $createdNew)
     } catch {
