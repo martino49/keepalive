@@ -4,6 +4,8 @@ Windows keep-awake tool. Keeps your PC awake in human-like cycles, knows when to
 
 No installs, no modules, no admin rights.
 
+Planned features and their rationale: [ROADMAP.md](./ROADMAP.md).
+
 ---
 
 ## Quick start
