@@ -117,8 +117,8 @@ function Write-Log([string]$Line) {
 # ---------------- window ----------------
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'KeepAlive'
-$form.Size = New-Object System.Drawing.Size(470, 800)
-$form.MinimumSize = New-Object System.Drawing.Size(470, 800)
+$form.Size = New-Object System.Drawing.Size(470, 880)
+$form.MinimumSize = New-Object System.Drawing.Size(470, 880)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
@@ -171,112 +171,156 @@ function New-KATextBox {
 
 # row 1: key + mode
 $cmbKey = New-Object System.Windows.Forms.ComboBox
-$cmbKey.Left = 118; $cmbKey.Top = 24; $cmbKey.Width = 110
+$cmbKey.Left = 118; $cmbKey.Top = 30; $cmbKey.Width = 110
 $cmbKey.DropDownStyle = 'DropDownList'
 $cmbKey.Items.AddRange(@('Shift', 'Ctrl', 'Alt', 'ScrollLock'))
 if ($script:KA_VK -and $script:KA_VK.ContainsKey($saved.Key)) { $cmbKey.SelectedItem = $saved.Key } else { $cmbKey.SelectedItem = 'Shift' }
 $cmbKey.BackColor = $C_FIELD; $cmbKey.ForeColor = $C_TEXT; $cmbKey.FlatStyle = 'Flat'
 $cmbKey.Parent = $grpSettings
-Add-RowLabel $grpSettings 'Key' 27 18 60 | Out-Null
+Add-RowLabel $grpSettings 'Key' 33 18 60 | Out-Null
 
 $cmbMode = New-Object System.Windows.Forms.ComboBox
-$cmbMode.Left = 278; $cmbMode.Top = 24; $cmbMode.Width = 110
+$cmbMode.Left = 286; $cmbMode.Top = 30; $cmbMode.Width = 110
 $cmbMode.DropDownStyle = 'DropDownList'
 $cmbMode.Items.AddRange(@('key', 'mouse', 'power', 'none'))
 $modeIndex = @('key', 'mouse', 'power', 'none').IndexOf($saved.InputMode)
 $cmbMode.SelectedIndex = if ($modeIndex -ge 0) { $modeIndex } else { 0 }
 $cmbMode.BackColor = $C_FIELD; $cmbMode.ForeColor = $C_TEXT; $cmbMode.FlatStyle = 'Flat'
 $cmbMode.Parent = $grpSettings
-Add-RowLabel $grpSettings 'Action' 27 250 26 | Out-Null
+Add-RowLabel $grpSettings 'Action' 33 250 30 | Out-Null
 
 # row 2: interval + active
-$txtInterval = New-KATextBox $grpSettings 118 58 110 ([int]$saved.Interval)
-Add-RowLabel $grpSettings 'Seconds' 61 18 60 | Out-Null
-$txtActive = New-KATextBox $grpSettings 278 58 110 $saved.Active
-Add-RowLabel $grpSettings 'Active min (0 = no rest)' 61 232 46 | Out-Null
+$txtInterval = New-KATextBox $grpSettings 118 66 110 ([int]$saved.Interval)
+Add-RowLabel $grpSettings 'Seconds' 69 18 60 | Out-Null
+$txtActive = New-KATextBox $grpSettings 286 66 110 $saved.Active
+Add-RowLabel $grpSettings 'Active min (0 = no rest)' 69 232 50 | Out-Null
 
 # row 3: rest + idle
-$txtRest = New-KATextBox $grpSettings 118 92 110 $saved.Rest
-Add-RowLabel $grpSettings 'Rest min' 95 18 60 | Out-Null
-$txtIdle = New-KATextBox $grpSettings 278 92 110 ([int]$saved.IdleThreshold)
-Add-RowLabel $grpSettings 'Idle sec (0 = off)' 95 232 46 | Out-Null
+$txtRest = New-KATextBox $grpSettings 118 102 110 $saved.Rest
+Add-RowLabel $grpSettings 'Rest min' 105 18 60 | Out-Null
+$txtIdle = New-KATextBox $grpSettings 286 102 110 ([int]$saved.IdleThreshold)
+Add-RowLabel $grpSettings 'Idle sec (0 = off)' 105 232 50 | Out-Null
 
 # row 4: blacklist + test
-$txtBlacklist = New-KATextBox $grpSettings 118 126 270 ($saved.Blacklist -join ', ')
-Add-RowLabel $grpSettings 'No-tap list' 129 18 60 | Out-Null
+$txtBlacklist = New-KATextBox $grpSettings 118 138 270 ($saved.Blacklist -join ', ')
+Add-RowLabel $grpSettings 'No-tap list' 141 18 60 | Out-Null
 
 # row 5: schedule window (from / run-for)
-$txtFrom = New-KATextBox $grpSettings 118 158 110 $saved.From
-Add-RowLabel $grpSettings 'Sched from' 161 18 60 | Out-Null
-$txtRunFor = New-KATextBox $grpSettings 278 158 110 $saved.RunFor
-Add-RowLabel $grpSettings 'Run for' 161 232 46 | Out-Null
+$txtFrom = New-KATextBox $grpSettings 118 172 110 $saved.From
+Add-RowLabel $grpSettings 'Sched from' 175 18 60 | Out-Null
+$txtRunFor = New-KATextBox $grpSettings 286 172 110 $saved.RunFor
+Add-RowLabel $grpSettings 'Run for' 175 232 50 | Out-Null
 
 # row 6: schedule until / run until
-$txtUntil = New-KATextBox $grpSettings 118 184 110 $saved.Until
-Add-RowLabel $grpSettings 'Sched to' 187 18 60 | Out-Null
-$txtRunUntil = New-KATextBox $grpSettings 278 184 110 $saved.RunUntil
-Add-RowLabel $grpSettings 'Run until' 187 232 46 | Out-Null
+$txtUntil = New-KATextBox $grpSettings 118 200 110 $saved.Until
+Add-RowLabel $grpSettings 'Sched to' 203 18 60 | Out-Null
+$txtRunUntil = New-KATextBox $grpSettings 286 200 110 $saved.RunUntil
+Add-RowLabel $grpSettings 'Run until' 203 232 50 | Out-Null
 
 # row 7: days / battery mode
-$txtDays = New-KATextBox $grpSettings 118 210 110 ($saved.Days -join ', ')
-Add-RowLabel $grpSettings 'Days' 213 18 60 | Out-Null
+$txtDays = New-KATextBox $grpSettings 118 226 110 ($saved.Days -join ', ')
+Add-RowLabel $grpSettings 'Days' 229 18 60 | Out-Null
 $cmbBattery = New-Object System.Windows.Forms.ComboBox
-$cmbBattery.Left = 278; $cmbBattery.Top = 209; $cmbBattery.Width = 110
+$cmbBattery.Left = 286; $cmbBattery.Top = 225; $cmbBattery.Width = 110
 $cmbBattery.DropDownStyle = 'DropDownList'
 $cmbBattery.Items.AddRange(@('ignore', 'require-ac', 'pause-on-battery'))
 $battIndex = @('ignore', 'require-ac', 'pause-on-battery').IndexOf($saved.BatteryMode)
 $cmbBattery.SelectedIndex = if ($battIndex -ge 0) { $battIndex } else { 0 }
 $cmbBattery.BackColor = $C_FIELD; $cmbBattery.ForeColor = $C_TEXT; $cmbBattery.FlatStyle = 'Flat'
 $cmbBattery.Parent = $grpSettings
-Add-RowLabel $grpSettings 'Battery' 213 232 46 | Out-Null
+Add-RowLabel $grpSettings 'Battery' 229 232 50 | Out-Null
 
 $btnTest = New-Object System.Windows.Forms.Button
-$btnTest.Left = 118; $btnTest.Top = 238; $btnTest.Width = 110; $btnTest.Height = 24
+$btnTest.Left = 118; $btnTest.Top = 252; $btnTest.Width = 110; $btnTest.Height = 24
 $btnTest.Text = 'Test key / mouse'
 $btnTest.FlatStyle = 'Flat'; $btnTest.FlatAppearance.BorderSize = 0
-$btnTest.BackColor = $C_FIELD; $btnTest.ForeColor = $C_MUTED
+$btnTest.BackColor = $C_FIELD; $btnTest.ForeColor = $C_TEXT
 $btnTest.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $btnTest.Parent = $grpSettings
 
 # row 5: checkboxes
 $chkPower = New-Object System.Windows.Forms.CheckBox
-$chkPower.Left = 118; $chkPower.Top = 262; $chkPower.Width = 150
+$chkPower.Left = 118; $chkPower.Top = 282; $chkPower.Width = 150
 $chkPower.Text = 'Windows power request'
 $chkPower.ForeColor = $C_MUTED
 $chkPower.Checked = [bool]$saved.PowerRequest
 $chkPower.Parent = $grpSettings
 
 $chkFullscreen = New-Object System.Windows.Forms.CheckBox
-$chkFullscreen.Left = 278; $chkFullscreen.Top = 262; $chkFullscreen.Width = 130
+$chkFullscreen.Left = 286; $chkFullscreen.Top = 282; $chkFullscreen.Width = 130
 $chkFullscreen.Text = 'Pause in fullscreen'
 $chkFullscreen.ForeColor = $C_MUTED
 $chkFullscreen.Checked = [bool]$saved.RespectFullscreen
 $chkFullscreen.Parent = $grpSettings
 
 $chkDryRun = New-Object System.Windows.Forms.CheckBox
-$chkDryRun.Left = 118; $chkDryRun.Top = 284; $chkDryRun.Width = 150
-
-$chkAutoStart = New-Object System.Windows.Forms.CheckBox
-$chkAutoStart.Left = 278; $chkAutoStart.Top = 284; $chkAutoStart.Width = 130
-$chkAutoStart.Text = 'Start with Windows'
-$chkAutoStart.ForeColor = $C_MUTED
-$chkAutoStart.Checked = (Test-KAAutoStartEnabled)
-$chkAutoStart.Parent = $grpSettings
+$chkDryRun.Left = 118; $chkDryRun.Top = 308; $chkDryRun.Width = 150
 $chkDryRun.Text = 'Dry run (log only)'
 $chkDryRun.ForeColor = $C_AMBER
 $chkDryRun.Parent = $grpSettings
 
+$chkAutoStart = New-Object System.Windows.Forms.CheckBox
+$chkAutoStart.Left = 286; $chkAutoStart.Top = 308; $chkAutoStart.Width = 130
+$chkAutoStart.Text = 'Start with Windows'
+$chkAutoStart.ForeColor = $C_MUTED
+$chkAutoStart.Checked = (Test-KAAutoStartEnabled)
+$chkAutoStart.Parent = $grpSettings
+
 $hint = New-Object System.Windows.Forms.Label
 $hint.Text = 'Only acts after real idle; pauses for listed apps and fullscreen windows.' + [Environment]::NewLine + 'Dry run plans the schedule without touching anything.'
-$hint.Left = 118; $hint.Top = 308; $hint.Width = 280; $hint.Height = 32
+$hint.Left = 118; $hint.Top = 332; $hint.Width = 280; $hint.Height = 32
 $hint.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $hint.ForeColor = $C_FAINT
 $hint.Parent = $grpSettings
 
+# --- presets group ---
+$grpPresets = New-Object System.Windows.Forms.GroupBox
+$grpPresets.Text = 'Presets'
+$grpPresets.Left = 22; $grpPresets.Top = 425; $grpPresets.Width = 410; $grpPresets.Height = 56
+$grpPresets.ForeColor = $C_MUTED
+$grpPresets.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
+$grpPresets.Parent = $form
+
+$btnPresetWork = New-Object System.Windows.Forms.Button
+$btnPresetWork.Left = 30; $btnPresetWork.Top = 22; $btnPresetWork.Width = 95; $btnPresetWork.Height = 24
+$btnPresetWork.Text = 'Work 08:00–18:00'
+$btnPresetWork.FlatStyle = 'Flat'; $btnPresetWork.FlatAppearance.BorderSize = 1
+$btnPresetWork.FlatAppearance.BorderColor = $C_MUTED
+$btnPresetWork.BackColor = $C_FIELD; $btnPresetWork.ForeColor = $C_TEXT
+$btnPresetWork.Font = New-Object System.Drawing.Font('Segoe UI', 8)
+$btnPresetWork.Parent = $grpPresets
+
+$btnPresetGame = New-Object System.Windows.Forms.Button
+$btnPresetGame.Left = 135; $btnPresetGame.Top = 22; $btnPresetGame.Width = 95; $btnPresetGame.Height = 24
+$btnPresetGame.Text = 'Gaming / fullscreen'
+$btnPresetGame.FlatStyle = 'Flat'; $btnPresetGame.FlatAppearance.BorderSize = 1
+$btnPresetGame.FlatAppearance.BorderColor = $C_MUTED
+$btnPresetGame.BackColor = $C_FIELD; $btnPresetGame.ForeColor = $C_TEXT
+$btnPresetGame.Font = New-Object System.Drawing.Font('Segoe UI', 8)
+$btnPresetGame.Parent = $grpPresets
+
+$btnPresetMovie = New-Object System.Windows.Forms.Button
+$btnPresetMovie.Left = 240; $btnPresetMovie.Top = 22; $btnPresetMovie.Width = 95; $btnPresetMovie.Height = 24
+$btnPresetMovie.Text = 'Movie / power only'
+$btnPresetMovie.FlatStyle = 'Flat'; $btnPresetMovie.FlatAppearance.BorderSize = 1
+$btnPresetMovie.FlatAppearance.BorderColor = $C_MUTED
+$btnPresetMovie.BackColor = $C_FIELD; $btnPresetMovie.ForeColor = $C_TEXT
+$btnPresetMovie.Font = New-Object System.Drawing.Font('Segoe UI', 8)
+$btnPresetMovie.Parent = $grpPresets
+
+$btnPresetNever = New-Object System.Windows.Forms.Button
+$btnPresetNever.Left = 345; $btnPresetNever.Top = 22; $btnPresetNever.Width = 50; $btnPresetNever.Height = 24
+$btnPresetNever.Text = 'Never rest'
+$btnPresetNever.FlatStyle = 'Flat'; $btnPresetNever.FlatAppearance.BorderSize = 1
+$btnPresetNever.FlatAppearance.BorderColor = $C_MUTED
+$btnPresetNever.BackColor = $C_FIELD; $btnPresetNever.ForeColor = $C_TEXT
+$btnPresetNever.Font = New-Object System.Drawing.Font('Segoe UI', 8)
+$btnPresetNever.Parent = $grpPresets
+
 # --- status group ---
 $grpStatus = New-Object System.Windows.Forms.GroupBox
 $grpStatus.Text = 'Status'
-$grpStatus.Left = 22; $grpStatus.Top = 436; $grpStatus.Width = 410; $grpStatus.Height = 212
+$grpStatus.Left = 22; $grpStatus.Top = 490; $grpStatus.Width = 410; $grpStatus.Height = 212
 $grpStatus.ForeColor = $C_MUTED
 $grpStatus.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
 $grpStatus.Parent = $form
@@ -317,6 +361,22 @@ $lblTapsHint.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $lblTapsHint.ForeColor = $C_FAINT
 $lblTapsHint.TextAlign = 'TopRight'
 $lblTapsHint.Parent = $grpStatus
+
+# session stats (right side, under taps)
+$script:lblSession = New-Object System.Windows.Forms.Label
+$script:lblSession.Left = 318; $script:lblSession.Top = 78; $script:lblSession.Width = 74; $script:lblSession.Height = 30
+$script:lblSession.Text = '00:00'
+$script:lblSession.Font = New-Object System.Drawing.Font('Consolas', 13)
+$script:lblSession.ForeColor = $C_TEXT
+$script:lblSession.TextAlign = 'MiddleRight'
+$script:lblSession.Parent = $grpStatus
+$lblSessionHint = New-Object System.Windows.Forms.Label
+$lblSessionHint.Left = 318; $lblSessionHint.Top = 106; $lblSessionHint.Width = 74
+$lblSessionHint.Text = 'session'
+$lblSessionHint.Font = New-Object System.Drawing.Font('Segoe UI', 8)
+$lblSessionHint.ForeColor = $C_FAINT
+$lblSessionHint.TextAlign = 'TopRight'
+$lblSessionHint.Parent = $grpStatus
 
 $script:progress = New-Object System.Windows.Forms.ProgressBar
 $script:progress.Left = 18; $script:progress.Top = 92; $script:progress.Width = 374; $script:progress.Height = 5
@@ -370,7 +430,7 @@ Write-Log 'Idle - not started.'
 
 # --- buttons ---
 $btnStart = New-Object System.Windows.Forms.Button
-$btnStart.Left = 22; $btnStart.Top = 660; $btnStart.Width = 120; $btnStart.Height = 40
+$btnStart.Left = 22; $btnStart.Top = 745; $btnStart.Width = 120; $btnStart.Height = 40
 $btnStart.Text = 'Start'
 $btnStart.FlatStyle = 'Flat'; $btnStart.FlatAppearance.BorderSize = 0
 $btnStart.BackColor = $C_ACCENT; $btnStart.ForeColor = [System.Drawing.Color]::White
@@ -378,24 +438,26 @@ $btnStart.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
 $btnStart.Parent = $form
 
 $btnStop = New-Object System.Windows.Forms.Button
-$btnStop.Left = 152; $btnStop.Top = 660; $btnStop.Width = 120; $btnStop.Height = 40
+$btnStop.Left = 152; $btnStop.Top = 745; $btnStop.Width = 120; $btnStop.Height = 40
 $btnStop.Text = 'Stop'
 $btnStop.Enabled = $false
-$btnStop.FlatStyle = 'Flat'; $btnStop.FlatAppearance.BorderSize = 0
+$btnStop.FlatStyle = 'Flat'; $btnStop.FlatAppearance.BorderSize = 1
+$btnStop.FlatAppearance.BorderColor = $C_MUTED
 $btnStop.BackColor = $C_FIELD; $btnStop.ForeColor = $C_TEXT
 $btnStop.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
 $btnStop.Parent = $form
 
 $btnHide = New-Object System.Windows.Forms.Button
-$btnHide.Left = 282; $btnHide.Top = 660; $btnHide.Width = 150; $btnHide.Height = 40
+$btnHide.Left = 282; $btnHide.Top = 745; $btnHide.Width = 150; $btnHide.Height = 40
 $btnHide.Text = 'Hide to tray'
-$btnHide.FlatStyle = 'Flat'; $btnHide.FlatAppearance.BorderSize = 0
+$btnHide.FlatStyle = 'Flat'; $btnHide.FlatAppearance.BorderSize = 1
+$btnHide.FlatAppearance.BorderColor = $C_MUTED
 $btnHide.BackColor = $C_FIELD; $btnHide.ForeColor = $C_TEXT
 $btnHide.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
 $btnHide.Parent = $form
 
 $lblFooter = New-Object System.Windows.Forms.Label
-$lblFooter.Left = 22; $lblFooter.Top = 708; $lblFooter.Width = 410; $lblFooter.Height = 30
+$lblFooter.Left = 22; $lblFooter.Top = 795; $lblFooter.Width = 410; $lblFooter.Height = 30
 $lblFooter.Text = 'Closing the window keeps running in the tray. Exit from the tray icon or press Stop.'
 $lblFooter.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $lblFooter.ForeColor = $C_FAINT
@@ -437,7 +499,7 @@ $timer.Add_Tick({
     try { $script:progress.Value = $pct } catch { }
 
     $uptime = if ($script:State.StartedAt) { Format-KASpan ((Get-Date) - $script:State.StartedAt).TotalSeconds } else { '00:00' }
-    $script:lblSchedule.Text = "$($script:State.Cfg.InputMode) every $($script:State.Cfg.Interval)s  |  running $uptime"
+    $script:lblSession.Text = $uptime
 
     # live "why not acting" line, straight from the suppression rules
     $script:lblSuppress.Text = (Get-KASuppressionReason $script:State.Cfg)
@@ -448,7 +510,7 @@ $timer.Add_Tick({
     $fg = Get-KAForegroundProcess
     $fgText = if ($fg) { $fg } else { 'unknown' }
     $phaseClock = if ($script:State.PhaseEnd -gt (Get-Date)) { $script:State.PhaseEnd.ToString('HH:mm') } else { '--:--' }
-    $script:lblSchedule.Text = "$($script:State.Cfg.InputMode) every $($script:State.Cfg.Interval)s  |  idle ${idle}s  |  app $fgText  |  power $src  |  phase ends $phaseClock"
+    $script:lblSchedule.Text = "$($script:State.Cfg.InputMode) every $($script:State.Cfg.Interval)s  |  uptime $uptime  |  idle ${idle}s  |  app $fgText  |  power $src  |  phase ends $phaseClock"
 
     # tray tooltip mirrors the phase
     if ($script:State.Phase -eq 'ACTIVE') {
@@ -629,6 +691,30 @@ $btnStart.Add_Click({ Start-KeepAlive })
 $btnStop.Add_Click({ Stop-KeepAlive })
 $trayToggle.Add_Click({ if ($script:State) { Stop-KeepAlive } else { Start-KeepAlive } })
 
+# --- clear log + always on top (between status panel and main buttons) ---
+$btnClearLog = New-Object System.Windows.Forms.Button
+$btnClearLog.Left = 22; $btnClearLog.Top = 712; $btnClearLog.Width = 95; $btnClearLog.Height = 26
+$btnClearLog.Text = 'Clear log'
+$btnClearLog.FlatStyle = 'Flat'; $btnClearLog.FlatAppearance.BorderSize = 1
+$btnClearLog.FlatAppearance.BorderColor = $C_MUTED
+$btnClearLog.BackColor = $C_FIELD; $btnClearLog.ForeColor = $C_TEXT
+$btnClearLog.Font = New-Object System.Drawing.Font('Segoe UI', 8)
+$btnClearLog.Parent = $form
+
+$chkAlwaysOnTop = New-Object System.Windows.Forms.CheckBox
+$chkAlwaysOnTop.Left = 140; $chkAlwaysOnTop.Top = 716; $chkAlwaysOnTop.Width = 110
+$chkAlwaysOnTop.Text = 'Always on top'
+$chkAlwaysOnTop.ForeColor = $C_MUTED
+$chkAlwaysOnTop.Parent = $form
+$chkAlwaysOnTop.Add_CheckStateChanged({
+    $form.Topmost = [bool]$chkAlwaysOnTop.Checked
+})
+
+$btnClearLog.Add_Click({
+    $script:lstLog.Items.Clear()
+    Write-Log 'Log cleared.'
+})
+
 $btnTest.Add_Click({
     if ($cmbMode.SelectedItem.ToString() -eq 'mouse') {
         Invoke-KAMouseNudge
@@ -643,6 +729,55 @@ $btnHide.Add_Click({
     $form.WindowState = 'Minimized'
     $form.ShowInTaskbar = $false
     $tray.Visible = $true
+})
+
+# ---- preset buttons ----
+function Apply-KAPreset {
+    param([hashtable]$P)
+    $cmbKey.SelectedItem = $P.Key
+    $cmbMode.SelectedItem = $P.InputMode
+    $txtInterval.Text = $P.Interval
+    $txtActive.Text = $P.Active
+    $txtRest.Text = $P.Rest
+    $txtIdle.Text = $P.IdleThreshold
+    $txtBlacklist.Text = ($P.Blacklist -join ', ')
+    $chkPower.Checked = $P.PowerRequest
+    $chkFullscreen.Checked = $P.RespectFullscreen
+    $txtFrom.Text = $P.From
+    $txtUntil.Text = $P.Until
+    $txtDays.Text = ($P.Days -join ', ')
+    $txtRunFor.Text = $P.RunFor
+    $txtRunUntil.Text = $P.RunUntil
+    $cmbBattery.SelectedItem = $P.BatteryMode
+}
+
+$btnPresetWork.Add_Click({
+    Apply-KAPreset @{
+        Key='Shift'; InputMode='key'; Interval=60; Active=0; Rest=0; IdleThreshold=0; Blacklist=@()
+        PowerRequest=$false; RespectFullscreen=$false; From='08:00'; Until='18:00'; Days=@('mon','tue','wed','thu','fri')
+        RunFor=''; RunUntil=''; BatteryMode='ignore'
+    }
+})
+$btnPresetGame.Add_Click({
+    Apply-KAPreset @{
+        Key='Shift'; InputMode='key'; Interval=60; Active=0; Rest=0; IdleThreshold=0; Blacklist=@()
+        PowerRequest=$true; RespectFullscreen=$true; From=''; Until=''; Days=@()
+        RunFor=''; RunUntil=''; BatteryMode='ignore'
+    }
+})
+$btnPresetMovie.Add_Click({
+    Apply-KAPreset @{
+        Key='Shift'; InputMode='power'; Interval=60; Active=0; Rest=0; IdleThreshold=0; Blacklist=@()
+        PowerRequest=$true; RespectFullscreen=$false; From=''; Until=''; Days=@()
+        RunFor=''; RunUntil=''; BatteryMode='ignore'
+    }
+})
+$btnPresetNever.Add_Click({
+    Apply-KAPreset @{
+        Key='Shift'; InputMode='key'; Interval=60; Active=0; Rest=0; IdleThreshold=0; Blacklist=@()
+        PowerRequest=$false; RespectFullscreen=$false; From=''; Until=''; Days=@()
+        RunFor=''; RunUntil=''; BatteryMode='ignore'
+    }
 })
 
 $trayShow.Add_Click({
@@ -675,30 +810,3 @@ $form.Add_FormClosing({
 [void]$form.ShowDialog()
 if ($script:Mutex) { $script:Mutex.Dispose(); $script:Mutex = $null }
 $timer.Stop()
-
-# ---- side scroll indicator ----
-# WinForms shows a scrollbar only when AutoScroll actually overflows; a thin
-# edge bar makes it visible at a glance even before the user reaches for the
-# scrollbar, and doubles as a scroll-position readout.
-$script:ScrollBar = New-Object System.Windows.Forms.ProgressBar
-$script:ScrollBar.Left = 444
-$script:ScrollBar.Top = 8
-$script:ScrollBar.Width = 6
-$script:ScrollBar.Height = 780
-$script:ScrollBar.Style = 'Continuous'
-$script:ScrollBar.Visible = $false
-$script:ScrollBar.Parent = $form
-
-$scrollTimer = New-Object System.Windows.Forms.Timer
-$scrollTimer.Interval = 250
-$scrollTimer.Add_Tick({
-    $scrollable = $form.VerticalScroll.Visible
-    if ($scrollable -ne $script:ScrollBar.Visible) { $script:ScrollBar.Visible = $scrollable }
-    if (-not $scrollable) { return }
-    $max = $form.VerticalScroll.Maximum
-    if ($max -le 0) { return }
-    $pct = [int](($form.VerticalScroll.Value / [double]$max) * 100)
-    if ($pct -lt 0) { $pct = 0 }; if ($pct -gt 100) { $pct = 100 }
-    try { $script:ScrollBar.Value = $pct } catch { }
-})
-$scrollTimer.Start()
