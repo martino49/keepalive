@@ -458,7 +458,7 @@ $btnHide.Parent = $form
 
 $lblFooter = New-Object System.Windows.Forms.Label
 $lblFooter.Left = 22; $lblFooter.Top = 795; $lblFooter.Width = 410; $lblFooter.Height = 30
-$lblFooter.Text = 'Closing the window keeps running in the tray. Exit from the tray icon or press Stop.'
+$lblFooter.Text = 'Hidden to the tray it leaves the taskbar and Alt-Tab. Restore with the tray icon; exit from its menu or press Stop.'
 $lblFooter.Font = New-Object System.Drawing.Font('Segoe UI', 8)
 $lblFooter.ForeColor = $C_FAINT
 $lblFooter.Parent = $form
@@ -475,6 +475,24 @@ $trayToggle = $trayMenu.Items.Add('Start / Stop')
 $trayMenu.Items.Add('-') | Out-Null
 $trayExit = $trayMenu.Items.Add('Exit')
 $tray.ContextMenuStrip = $trayMenu
+
+# ---------------- hide / show via tray ----------------
+# A minimized window still lives in Alt-Tab, and ShowInTaskbar=$false alone
+# does not remove it either. Fully hiding the window takes it out of both the
+# taskbar and Alt-Tab, so the tray icon is the only way back in.
+function Hide-KAToTray {
+    $form.Hide()
+    $form.ShowInTaskbar = $false
+    $tray.Visible = $true
+}
+
+function Show-KAFromTray {
+    $form.ShowInTaskbar = $true
+    $tray.Visible = $false
+    $form.Show()
+    if ($form.WindowState -ne 'Normal') { $form.WindowState = 'Normal' }
+    $form.Activate()
+}
 
 # ---------------- engine + timer ----------------
 $script:State = $null
@@ -726,9 +744,8 @@ $btnTest.Add_Click({
 })
 
 $btnHide.Add_Click({
-    $form.WindowState = 'Minimized'
-    $form.ShowInTaskbar = $false
-    $tray.Visible = $true
+    Hide-KAToTray
+    $tray.ShowBalloonTip(1200, 'KeepAlive', 'Hidden from the taskbar and Alt-Tab. Click the tray icon to reopen.', 'Info')
 })
 
 # ---- preset buttons ----
@@ -780,11 +797,7 @@ $btnPresetNever.Add_Click({
     }
 })
 
-$trayShow.Add_Click({
-    $form.ShowInTaskbar = $true
-    $form.WindowState = 'Normal'
-    $tray.Visible = $false
-})
+$trayShow.Add_Click({ Show-KAFromTray })
 $tray.Add_MouseDoubleClick({ $trayShow.PerformClick() })
 
 $trayExit.Add_Click({
@@ -797,9 +810,7 @@ $form.Add_FormClosing({
     param($sender, $e)
     if ($script:State) {
         $e.Cancel = $true
-        $form.WindowState = 'Minimized'
-        $form.ShowInTaskbar = $false
-        $tray.Visible = $true
+        Hide-KAToTray
         $tray.ShowBalloonTip(3000, 'KeepAlive', 'Still running in the tray. Right-click the icon to exit.', 'Info')
     } else {
         if ($script:Mutex) { $script:Mutex.Dispose(); $script:Mutex = $null }
@@ -807,6 +818,9 @@ $form.Add_FormClosing({
     }
 })
 
-[void]$form.ShowDialog()
+# Application.Run (NOT ShowDialog): ShowDialog returns the moment we Hide()
+# the form, which would end the script and kill the process - and the tray
+# icon with it. Run keeps pumping messages while the form stays hidden.
+[void][System.Windows.Forms.Application]::Run($form)
 if ($script:Mutex) { $script:Mutex.Dispose(); $script:Mutex = $null }
 $timer.Stop()
